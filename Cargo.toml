@@ -1,0 +1,4 @@
+# SigilYX — Not affiliated with Alteryx, Inc.
+[workspace]
+members = ["sigilyx"]
+resolver = "2"

@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# Rust
+target/
+
+# IDE
+.vscode/
+.idea/
+
+# Test cache
+.pytest_cache/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Generated benchmark data
+benchmarks/*.arrow
+benchmarks/*.csv
+benchmarks/*.yxdb
+*.yxdb

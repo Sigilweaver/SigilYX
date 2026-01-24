@@ -1,0 +1,15 @@
+# Not affiliated with Alteryx, Inc.
+[package]
+name = "sigilyx"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance, standalone reader/writer for Alteryx .yxdb files."
+license = "AGPL-3.0-only"
+
+[dependencies]
+polars = { version = "0.46", features = ["lazy", "dtype-date", "dtype-datetime", "dtype-time", "dtype-decimal", "ipc"] }
+quick-xml = "0.37"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
