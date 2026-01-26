@@ -1,1 +1,10 @@
-//! SigilYX — placeholder
+//! # SigilYX
+//!
+//! A fast, safe Rust library for reading and writing Alteryx YXDB files, with native
+//! Polars DataFrame integration.
+//!
+//! Not affiliated with Alteryx, Inc. "Alteryx" is a registered trademark of Alteryx, Inc.
+
+pub mod error;
+
+pub use error::{YxdbError, Result};
