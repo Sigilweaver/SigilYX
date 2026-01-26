@@ -6,5 +6,7 @@
 //! Not affiliated with Alteryx, Inc. "Alteryx" is a registered trademark of Alteryx, Inc.
 
 pub mod error;
+pub mod field;
 
 pub use error::{YxdbError, Result};
+pub use field::{FieldType, FieldMeta};
