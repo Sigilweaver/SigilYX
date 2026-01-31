@@ -7,6 +7,7 @@
 
 pub mod error;
 pub mod field;
+pub mod lzf;
 
 pub use error::{YxdbError, Result};
 pub use field::{FieldType, FieldMeta};
