@@ -9,6 +9,7 @@ pub mod error;
 pub mod field;
 pub mod header;
 pub mod lzf;
+pub mod record;
 
 pub use error::{YxdbError, Result};
 pub use field::{FieldType, FieldMeta};
