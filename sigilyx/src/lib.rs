@@ -7,6 +7,7 @@
 
 pub mod error;
 pub mod field;
+pub mod header;
 pub mod lzf;
 
 pub use error::{YxdbError, Result};
