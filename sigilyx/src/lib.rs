@@ -8,12 +8,14 @@
 //! ## Quick Start
 //!
 //! ```no_run
-//! use sigilyx::read_yxdb;
+//! use sigilyx::{read_yxdb, write_yxdb};
 //!
 //! // Read a YXDB file
 //! let df = read_yxdb("path/to/file.yxdb").unwrap();
 //! println!("{}", df);
 //!
+//! // Write a DataFrame to YXDB
+//! write_yxdb("path/to/output.yxdb", &df).unwrap();
 //! ```
 
 pub mod error;
@@ -22,10 +24,12 @@ pub mod header;
 pub mod lzf;
 pub mod record;
 pub mod reader;
+pub mod writer;
 
 pub use error::{YxdbError, Result};
 pub use field::{FieldType, FieldMeta};
 pub use reader::YxdbReader;
+pub use writer::{write_yxdb, write_yxdb_with_schema, write_yxdb_from_ipc, YxdbWriter};
 
 use polars::prelude::*;
 use std::path::Path;
