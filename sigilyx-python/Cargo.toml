@@ -1,0 +1,15 @@
+# Not affiliated with Alteryx, Inc.
+[package]
+name = "sigilyx-python"
+version = "0.1.0"
+edition = "2021"
+description = "Python bindings for SigilYX — high-performance YXDB reader"
+license = "AGPL-3.0-only"
+
+[lib]
+name = "sigilyx"
+crate-type = ["cdylib"]
+
+[dependencies]
+sigilyx-core = { path = "../sigilyx", package = "sigilyx" }
+pyo3 = { version = "0.23", features = ["extension-module"] }

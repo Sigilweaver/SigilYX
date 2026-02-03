@@ -1,4 +1,4 @@
 # SigilYX — Not affiliated with Alteryx, Inc.
 [workspace]
-members = ["sigilyx"]
+members = ["sigilyx", "sigilyx-python"]
 resolver = "2"
