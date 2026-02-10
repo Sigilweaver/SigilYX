@@ -23,28 +23,67 @@ pub enum FieldType {
     SpatialObj,
 }
 
+impl std::fmt::Display for FieldType {
+    /// Display the canonical YXDB XML name for this field type.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_xml_str())
+    }
+}
+
+impl std::str::FromStr for FieldType {
+    type Err = ();
+
+    /// Parse a field type from the XML `type` attribute string.
+    fn from_str(s: &str) -> std::result::Result<Self, ()> {
+        match s {
+            "Bool" => Ok(FieldType::Bool),
+            "Byte" => Ok(FieldType::Byte),
+            "Int16" => Ok(FieldType::Int16),
+            "Int32" => Ok(FieldType::Int32),
+            "Int64" => Ok(FieldType::Int64),
+            "Float" => Ok(FieldType::Float),
+            "Double" => Ok(FieldType::Double),
+            "FixedDecimal" => Ok(FieldType::FixedDecimal),
+            "String" => Ok(FieldType::String),
+            "WString" => Ok(FieldType::WString),
+            "V_String" => Ok(FieldType::VString),
+            "V_WString" => Ok(FieldType::VWString),
+            "Date" => Ok(FieldType::Date),
+            "Time" => Ok(FieldType::Time),
+            "DateTime" => Ok(FieldType::DateTime),
+            "Blob" => Ok(FieldType::Blob),
+            "SpatialObj" => Ok(FieldType::SpatialObj),
+            _ => Err(()),
+        }
+    }
+}
+
 impl FieldType {
     /// Parse a field type from the XML `type` attribute string.
-    pub fn from_str(s: &str) -> Option<FieldType> {
-        match s {
-            "Bool" => Some(FieldType::Bool),
-            "Byte" => Some(FieldType::Byte),
-            "Int16" => Some(FieldType::Int16),
-            "Int32" => Some(FieldType::Int32),
-            "Int64" => Some(FieldType::Int64),
-            "Float" => Some(FieldType::Float),
-            "Double" => Some(FieldType::Double),
-            "FixedDecimal" => Some(FieldType::FixedDecimal),
-            "String" => Some(FieldType::String),
-            "WString" => Some(FieldType::WString),
-            "V_String" => Some(FieldType::VString),
-            "V_WString" => Some(FieldType::VWString),
-            "Date" => Some(FieldType::Date),
-            "Time" => Some(FieldType::Time),
-            "DateTime" => Some(FieldType::DateTime),
-            "Blob" => Some(FieldType::Blob),
-            "SpatialObj" => Some(FieldType::SpatialObj),
-            _ => None,
+    pub fn from_xml_str(s: &str) -> Option<FieldType> {
+        s.parse().ok()
+    }
+
+    /// Return the canonical YXDB XML attribute name for this type.
+    pub fn as_xml_str(&self) -> &'static str {
+        match self {
+            FieldType::Bool => "Bool",
+            FieldType::Byte => "Byte",
+            FieldType::Int16 => "Int16",
+            FieldType::Int32 => "Int32",
+            FieldType::Int64 => "Int64",
+            FieldType::Float => "Float",
+            FieldType::Double => "Double",
+            FieldType::FixedDecimal => "FixedDecimal",
+            FieldType::String => "String",
+            FieldType::WString => "WString",
+            FieldType::VString => "V_String",
+            FieldType::VWString => "V_WString",
+            FieldType::Date => "Date",
+            FieldType::Time => "Time",
+            FieldType::DateTime => "DateTime",
+            FieldType::Blob => "Blob",
+            FieldType::SpatialObj => "SpatialObj",
         }
     }
 
@@ -85,7 +124,7 @@ impl FieldType {
 }
 
 /// Metadata for a single field (column) in a YXDB file.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldMeta {
     /// Column name.
     pub name: String,
@@ -126,12 +165,12 @@ mod tests {
             ("SpatialObj", FieldType::SpatialObj),
         ];
         for (s, expected) in types {
-            assert_eq!(FieldType::from_str(s), Some(expected), "failed for {s}");
+            assert_eq!(FieldType::from_xml_str(s), Some(expected), "failed for {s}");
         }
     }
 
     #[test]
     fn unknown_type_returns_none() {
-        assert_eq!(FieldType::from_str("Unknown"), None);
+        assert_eq!(FieldType::from_xml_str("Unknown"), None);
     }
 }
