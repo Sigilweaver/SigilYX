@@ -1,11 +1,88 @@
 use crate::error::{YxdbError, Result};
 
-/// LZF compression and decompression.
+// LZF compression and decompression.
+//
+// YXDB record data is stored in LZF-compressed blocks. Each block is preceded
+// by a 4-byte little-endian length. If the high bit (0x80000000) is set, the
+// block is stored uncompressed and the remaining 31 bits are the byte length.
+// Otherwise, the block is LZF-compressed.
+
+/// Compression algorithm used for record block data.
 ///
-/// YXDB record data is stored in LZF-compressed blocks. Each block is preceded
-/// by a 4-byte little-endian length. If the high bit (0x80000000) is set, the
-/// block is stored uncompressed and the remaining 31 bits are the byte length.
-/// Otherwise, the block is LZF-compressed.
+/// Standard YXDB files use LZF (compression_version = 1 in the file header).
+/// Compression version 0 means uncompressed (no block framing — records stored
+/// directly in the file stream). This is supported for reading only; all writes
+/// use LZF for maximum compatibility with other YXDB readers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompressionAlgorithm {
+    /// LZF compression (compression_version = 1). Standard, compatible with all YXDB readers.
+    Lzf,
+}
+
+impl CompressionAlgorithm {
+    /// Return the compression_version value for the YXDB header.
+    pub fn version_id(self) -> i32 {
+        match self {
+            CompressionAlgorithm::Lzf => 1,
+        }
+    }
+
+    /// Parse a header compression_version value.
+    ///
+    /// Returns `None` for version 0 (uncompressed — no block framing),
+    /// `Some(Lzf)` for version 1 (LZF-compressed blocks).
+    pub fn from_version_id(v: i32) -> Result<Option<Self>> {
+        match v {
+            0 => Ok(None),
+            1 => Ok(Some(CompressionAlgorithm::Lzf)),
+            _ => Err(YxdbError::InvalidFile(format!(
+                "unsupported compression version: {v} (expected 0=uncompressed or 1=LZF)"
+            ))),
+        }
+    }
+}
+
+// ── C liblzf FFI ──────────────────────────────────────────────────────
+
+extern "C" {
+    fn lzf_decompress(
+        in_data: *const u8,
+        in_len: std::ffi::c_uint,
+        out_data: *mut u8,
+        out_len: std::ffi::c_uint,
+    ) -> std::ffi::c_uint;
+}
+
+/// Decompress LZF data into a pre-allocated output slice using C liblzf.
+///
+/// This is the primary decompression path, used for both sequential and
+/// parallel block decompression. The C implementation uses Duff's device
+/// for small copies, which is faster than Rust loops for short runs.
+///
+/// Returns the number of decompressed bytes written to `out`.
+pub fn decompress_into(input: &[u8], out: &mut [u8]) -> Result<usize> {
+    if input.is_empty() {
+        return Ok(0);
+    }
+    let result = unsafe {
+        lzf_decompress(
+            input.as_ptr(),
+            input.len() as std::ffi::c_uint,
+            out.as_mut_ptr(),
+            out.len() as std::ffi::c_uint,
+        )
+    };
+    if result == 0 {
+        Err(YxdbError::LzfError("C lzf_decompress failed".into()))
+    } else if (result as usize) > out.len() {
+        Err(YxdbError::LzfError(format!(
+            "C lzf_decompress returned {} but output buffer is only {} bytes",
+            result, out.len()
+        )))
+    } else {
+        Ok(result as usize)
+    }
+}
 
 // ── Compression ────────────────────────────────────────────────────────
 
@@ -155,83 +232,35 @@ fn hash(data: &[u8], pos: usize) -> usize {
 /// Decompress an LZF-compressed buffer into `out`.
 ///
 /// Returns the number of bytes written to `out`.
+/// Uses C liblzf for maximum throughput.
+///
+/// The output buffer must be large enough to hold the decompressed data.
+/// For YXDB blocks, the maximum output is 262144 bytes (one block).
 pub fn decompress(input: &[u8], out: &mut Vec<u8>) -> Result<usize> {
-    let mut in_idx: usize = 0;
-    let mut out_idx: usize = 0;
-    let in_len = input.len();
-
-    // Ensure capacity
-    if out.len() < 262144 {
-        out.resize(262144, 0);
-    }
-
-    while in_idx < in_len {
-        let ctrl = input[in_idx] as usize;
-        in_idx += 1;
-
-        if ctrl < 32 {
-            // Literal run: copy ctrl+1 bytes
-            let length = ctrl + 1;
-            let end = in_idx + length;
-            if end > in_len {
-                return Err(YxdbError::LzfError(
-                    "literal run exceeds input buffer".into(),
-                ));
-            }
-            ensure_capacity(out, out_idx + length);
-            out[out_idx..out_idx + length].copy_from_slice(&input[in_idx..end]);
-            in_idx = end;
-            out_idx += length;
-        } else {
-            // Back-reference
-            let mut length = ctrl >> 5;
-            let mut reference = out_idx as isize - ((ctrl & 0x1f) << 8) as isize - 1;
-
-            if length == 7 {
-                if in_idx >= in_len {
-                    return Err(YxdbError::LzfError(
-                        "extended length byte missing".into(),
-                    ));
-                }
-                length += input[in_idx] as usize;
-                in_idx += 1;
-            }
-
-            if in_idx >= in_len {
-                return Err(YxdbError::LzfError(
-                    "reference offset byte missing".into(),
-                ));
-            }
-            reference -= input[in_idx] as isize;
-            in_idx += 1;
-
-            length += 2;
-
-            if reference < 0 {
-                return Err(YxdbError::LzfError(
-                    "back-reference before start of output".into(),
-                ));
-            }
-
-            let mut ref_idx = reference as usize;
-            ensure_capacity(out, out_idx + length);
-
-            // Copy byte-by-byte to handle overlapping references
-            for _ in 0..length {
-                out[out_idx] = out[ref_idx];
-                out_idx += 1;
-                ref_idx += 1;
-            }
-        }
-    }
-
-    Ok(out_idx)
+    decompress_into(input, out)
 }
 
-#[inline]
-fn ensure_capacity(buf: &mut Vec<u8>, needed: usize) {
-    if needed > buf.len() {
-        buf.resize(needed * 2, 0);
+/// Decompress a block using the specified algorithm.
+pub fn decompress_block_into(algo: CompressionAlgorithm, input: &[u8], out: &mut [u8]) -> Result<usize> {
+    match algo {
+        CompressionAlgorithm::Lzf => decompress_into(input, out),
+    }
+}
+
+/// Decompress a block using the specified algorithm.
+///
+/// `out` must be pre-allocated with sufficient capacity. Use
+/// [`decompress_block_into`] for the slice-based variant.
+pub fn decompress_block(algo: CompressionAlgorithm, input: &[u8], out: &mut Vec<u8>) -> Result<usize> {
+    match algo {
+        CompressionAlgorithm::Lzf => decompress(input, out),
+    }
+}
+
+/// Compress a block using the specified algorithm.
+pub fn compress_block(algo: CompressionAlgorithm, input: &[u8]) -> Option<Vec<u8>> {
+    match algo {
+        CompressionAlgorithm::Lzf => compress(input),
     }
 }
 
@@ -299,6 +328,126 @@ mod tests {
             let mut decompressed = vec![0u8; 256];
             let n = decompress(&compressed, &mut decompressed).unwrap();
             assert_eq!(&decompressed[..n], &data[..]);
+        }
+    }
+
+    #[test]
+    fn compression_algorithm_version_ids() {
+        assert_eq!(CompressionAlgorithm::Lzf.version_id(), 1);
+        assert_eq!(CompressionAlgorithm::from_version_id(0).unwrap(), None);
+        assert_eq!(CompressionAlgorithm::from_version_id(1).unwrap(), Some(CompressionAlgorithm::Lzf));
+        assert!(CompressionAlgorithm::from_version_id(2).is_err());
+        assert!(CompressionAlgorithm::from_version_id(3).is_err());
+    }
+
+    #[test]
+    fn decompress_block_dispatch() {
+        let data = b"Hello Hello Hello Hello Hello Hello Hello Hello World!";
+
+        // LZF round-trip via dispatch
+        let lzf_compressed = compress_block(CompressionAlgorithm::Lzf, data).unwrap();
+        let mut out = vec![0u8; 256];
+        let n = decompress_block_into(CompressionAlgorithm::Lzf, &lzf_compressed, &mut out).unwrap();
+        assert_eq!(&out[..n], &data[..]);
+    }
+
+    // ── Edge-case / stress tests ─────────────────────────────────────
+
+    #[test]
+    fn compress_all_zeros() {
+        // Highly compressible: all zeros
+        let data = vec![0u8; 8192];
+        let compressed = compress(&data).expect("all-zeros should compress well");
+        assert!(compressed.len() < data.len() / 10);
+        let mut decompressed = vec![0u8; data.len()];
+        let n = decompress(&compressed, &mut decompressed).unwrap();
+        assert_eq!(&decompressed[..n], &data[..]);
+    }
+
+    #[test]
+    fn compress_all_same_byte() {
+        let data = vec![0xAA; 4096];
+        let compressed = compress(&data).expect("repeated byte should compress");
+        let mut decompressed = vec![0u8; data.len()];
+        let n = decompress(&compressed, &mut decompressed).unwrap();
+        assert_eq!(&decompressed[..n], &data[..]);
+    }
+
+    #[test]
+    fn compress_exactly_max_lit_boundary() {
+        // 32 bytes is MAX_LIT boundary — make sure literal run splits work
+        let data: Vec<u8> = (0..64).map(|i| (i * 7 + 3) as u8).collect();
+        if let Some(compressed) = compress(&data) {
+            let mut decompressed = vec![0u8; 256];
+            let n = decompress(&compressed, &mut decompressed).unwrap();
+            assert_eq!(&decompressed[..n], &data[..]);
+        }
+    }
+
+    #[test]
+    fn compress_exactly_five_bytes() {
+        // Smallest input that won't be rejected (> 4 bytes)
+        let data = b"AAAAA";
+        // May or may not compress, but should not panic
+        if let Some(compressed) = compress(data) {
+            let mut decompressed = vec![0u8; 256];
+            let n = decompress(&compressed, &mut decompressed).unwrap();
+            assert_eq!(&decompressed[..n], &data[..]);
+        }
+    }
+
+    #[test]
+    fn compress_block_size_data() {
+        // 256 KB — the YXDB block size
+        let data: Vec<u8> = (0..262144).map(|i| ((i * 13 + 7) % 256) as u8).collect();
+        if let Some(compressed) = compress(&data) {
+            let mut decompressed = vec![0u8; data.len()];
+            let n = decompress(&compressed, &mut decompressed).unwrap();
+            assert_eq!(n, data.len());
+            assert_eq!(&decompressed[..n], &data[..]);
+        }
+    }
+
+    #[test]
+    fn compress_long_back_reference() {
+        // Trigger back-references close to MAX_REF (264 bytes)
+        // Pattern: 300 repeats of 'A' (long match) + different suffix
+        let mut data = vec![b'A'; 300];
+        data.extend_from_slice(b"XYZ_UNIQUE_SUFFIX");
+        let compressed = compress(&data).expect("should compress with long matches");
+        let mut decompressed = vec![0u8; data.len()];
+        let n = decompress(&compressed, &mut decompressed).unwrap();
+        assert_eq!(&decompressed[..n], &data[..]);
+    }
+
+    #[test]
+    fn compress_alternating_pattern() {
+        // Alternating bytes shouldn't cause issues at hash boundaries
+        let data: Vec<u8> = (0..1000).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
+        if let Some(compressed) = compress(&data) {
+            let mut decompressed = vec![0u8; data.len()];
+            let n = decompress(&compressed, &mut decompressed).unwrap();
+            assert_eq!(&decompressed[..n], &data[..]);
+        }
+    }
+
+    #[test]
+    fn decompress_empty_input() {
+        let mut out = vec![0u8; 64];
+        let n = decompress(&[], &mut out).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn roundtrip_many_sizes() {
+        // Test round-trip for various sizes from 5 to 10000
+        for size in [5, 10, 31, 32, 33, 63, 64, 100, 255, 256, 1000, 4096, 10000] {
+            let data: Vec<u8> = (0..size).map(|i| ((i * 3 + 1) % 256) as u8).collect();
+            if let Some(compressed) = compress(&data) {
+                let mut decompressed = vec![0u8; size + 64];
+                let n = decompress(&compressed, &mut decompressed).unwrap();
+                assert_eq!(&decompressed[..n], &data[..], "failed for size {size}");
+            }
         }
     }
 }
