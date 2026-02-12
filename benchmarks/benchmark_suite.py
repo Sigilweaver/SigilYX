@@ -8,8 +8,6 @@ at runtime.
 
 Usage:
     python benchmarks/benchmark_suite.py
-
-Not affiliated with Alteryx, Inc.
 """
 
 import os
