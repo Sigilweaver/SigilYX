@@ -9,9 +9,6 @@ Usage:
 
 If no file is provided, it will use the generated benchmark data.
 
----
-DISCLAIMER: This project is not affiliated with Alteryx, Inc.
----
 """
 
 from __future__ import annotations
@@ -127,56 +124,6 @@ def main():
     print("\n" + "="*60)
     print("Benchmark complete!")
     print("="*60)
-    
-    # -------------------------------------------------------------------
-    # TO BENCHMARK AGAINST ALTERYX SDK:
-    # -------------------------------------------------------------------
-    # The Alteryx Python SDK (`ayx`) is only available inside Alteryx
-    # Designer's Python environment. To compare SigilYX against the
-    # official SDK:
-    #
-    # 1. Open Alteryx Designer
-    # 2. Create a workflow with a Python tool
-    # 3. Copy the code below into the Python tool
-    # 4. Run the workflow
-    #
-    # --- Alteryx SDK Benchmark Code (run inside Alteryx Python tool) ---
-    #
-    # import time
-    # from AlteryxPythonSDK import AlteryxYXDB
-    # import pandas as pd
-    # import numpy as np
-    #
-    # def benchmark_alteryx_sdk(file_path, runs=3):
-    #     """Benchmark Alteryx SDK read performance."""
-    #     times = []
-    #     for i in range(runs):
-    #         start = time.perf_counter()
-    #         yxdb = AlteryxYXDB()
-    #         yxdb.open(file_path)
-    #         
-    #         # Read using numpy arrays (fastest SDK method)
-    #         arrays = yxdb.read_nparrays()
-    #         
-    #         # Build DataFrame
-    #         field_names = [yxdb.get_field_info(i).name 
-    #                        for i in range(yxdb.get_field_count())]
-    #         data = {}
-    #         for i, name in enumerate(field_names):
-    #             arr = arrays[i]
-    #             data[name] = arr.numpy_array if arr.is_numpy else list(arr.data)
-    #         df = pd.DataFrame(data)
-    #         
-    #         elapsed = time.perf_counter() - start
-    #         times.append(elapsed)
-    #         print(f"Run {i+1}: {elapsed:.3f}s")
-    #     
-    #     avg_time = sum(times) / len(times)
-    #     print(f"Average: {avg_time:.3f}s")
-    #     print(f"Throughput: {len(df) / avg_time:,.0f} rows/sec")
-    #
-    # benchmark_alteryx_sdk(r"C:\path\to\your\file.yxdb")
-    # -------------------------------------------------------------------
 
 
 if __name__ == "__main__":

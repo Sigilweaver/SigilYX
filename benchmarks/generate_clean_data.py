@@ -23,10 +23,7 @@ To convert to YXDB (in Alteryx Designer Python Tool):
     df = table.to_pandas()
     Alteryx.write(df, 1)  # Output to anchor 1
 
----
-DISCLAIMER: This project is not affiliated with Alteryx, Inc.
 All generated data is synthetic and contains no real personal information.
----
 """
 
 from __future__ import annotations
