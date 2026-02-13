@@ -1,10 +1,12 @@
-# Not affiliated with Alteryx, Inc.
 [package]
 name = "sigilyx-python"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2021"
-description = "Python bindings for SigilYX — high-performance YXDB reader"
+description = "Python bindings for SigilYX — high-performance YXDB reader and writer"
 license = "AGPL-3.0-only"
+authors = ["Sigilweaver Holdings LLC"]
+repository = "https://github.com/sigilweaver/sigilyx"
+publish = false
 
 [lib]
 name = "sigilyx"
@@ -13,3 +15,4 @@ crate-type = ["cdylib"]
 [dependencies]
 sigilyx-core = { path = "../sigilyx", package = "sigilyx" }
 pyo3 = { version = "0.23", features = ["extension-module"] }
+pyo3-polars = "0.20"
