@@ -1,25 +1,7 @@
 # YXDB File Format Specification
 
-*Derived from study of existing open-source YXDB implementations, especially [Alteryx/OpenYXDB](https://github.com/alteryx/OpenYXDB).*
+*Based on existing open-source YXDB implementations, especially [Alteryx/OpenYXDB](https://github.com/alteryx/OpenYXDB).*
 
----
-
-## Provenance
-
-This specification was derived from study of existing open-source YXDB
-implementations:
-
-- **Primary references** (MIT licensed):
-  [yxdb-go](https://github.com/tlarsendataguy-yxdb/yxdb-go),
-  [yxdb-py](https://github.com/tlarsendataguy-yxdb/yxdb-py)
-
-- **Format validation** (GPL-3.0, studied for format understanding only):
-  [OpenYXDB](https://github.com/alteryx/OpenYXDB),
-  [Open_AlteryxYXDB](https://github.com/AlteryxNed/Open_AlteryxYXDB)
-
-No proprietary Alteryx source code, documentation, or EULA-protected materials
-were accessed. All knowledge was derived from publicly available open-source
-implementations.
 ---
 
 ## Overview
@@ -267,21 +249,16 @@ Write 512 bytes of zeros (or partial header). The record count at bytes 104-111 
 
 ## References
 
-This specification was developed independently. The following open-source projects also implement YXDB readers and were used as reference to validate our understanding:
+The following open-source projects were used as references:
 
+- **[Alteryx/OpenYXDB](https://github.com/alteryx/OpenYXDB)** — C++ implementation by Alteryx
+- **[NedHarding/Open_AlteryxYXDB](https://github.com/AlteryxNed/Open_AlteryxYXDB)** — C++ implementation (GPL-3.0)
 - **[yxdb-go](https://github.com/tlarsendataguy-yxdb/yxdb-go)** — Go implementation by @tlarsendataguy (MIT License)
 - **[yxdb-py](https://github.com/tlarsendataguy-yxdb/yxdb-py)** — Python implementation by @tlarsendataguy (MIT License)
-
-These projects were consulted as independent implementations to cross-reference format understanding, not as source material for our code.
-
----
-
-## Version History
-
-| Version | Date | Notes |
-|---------|------|-------|
-| 1.0 | 2026-02 | Initial specification derived from Alteryx Designer 2024.x output |
+- **[yxdb-java](https://github.com/tlarsendataguy-yxdb/yxdb-java)** — Java implementation by @tlarsendataguy (MIT License)
+- **[yxdb-net](https://github.com/tlarsendataguy-yxdb/yxdb-net)** — .NET implementation by @tlarsendataguy (MIT License)
+- **[yxdb-odbc](https://github.com/tlarsendataguy-yxdb/yxdb-odbc)** — ODBC driver by @tlarsendataguy
 
 ---
 
-*This specification is provided "as-is" for interoperability purposes. YXDB is a trademark of Alteryx, Inc. This document is not affiliated with or endorsed by Alteryx, Inc.*
+*This specification is provided "as-is" for interoperability purposes.*
