@@ -1,0 +1,17 @@
+{
+    "name": "sigilyx-docs",
+    "compatibility_date": "2024-11-26",
+    "assets": {
+        "directory": "./build"
+    },
+    "routes": [
+        {
+            "pattern": "sigilweaver.app/sigilyx",
+            "zone_name": "sigilweaver.app"
+        },
+        {
+            "pattern": "sigilweaver.app/sigilyx/*",
+            "zone_name": "sigilweaver.app"
+        }
+    ]
+}
