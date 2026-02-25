@@ -4,12 +4,38 @@ build-backend = "maturin"
 
 [project]
 name = "sigilyx"
-version = "0.1.0"
-description = "SigilYX — High-performance YXDB file reader. Not affiliated with Alteryx, Inc."
+version = "0.0.0"
+description = "SigilYX — High-performance YXDB file reader and writer."
 readme = "README.md"
 license = {text = "AGPL-3.0-only"}
+authors = [{name = "Sigilweaver Holdings LLC"}]
 requires-python = ">=3.9"
 dependencies = ["polars>=0.20"]
+keywords = ["yxdb", "alteryx", "polars", "dataframe", "etl", "arrow"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://sigilweaver.app/sigilyx/"
+Repository = "https://github.com/sigilweaver/sigilyx"
+Documentation = "https://sigilweaver.app/sigilyx/"
+Issues = "https://github.com/sigilweaver/sigilyx/issues"
+Changelog = "https://github.com/sigilweaver/sigilyx/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 arrow = ["pyarrow>=14.0"]
@@ -23,3 +49,8 @@ module-name = "sigilyx.sigilyx"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pyarrow>=21.0.0",
+]

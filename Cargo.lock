@@ -1747,7 +1747,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "sigilyx"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "cc",
  "memmap2",
@@ -1760,8 +1760,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigilyx-bench"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sigilyx",
+]
+
+[[package]]
 name = "sigilyx-python"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "pyo3",
  "pyo3-polars",
