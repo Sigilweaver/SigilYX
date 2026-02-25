@@ -1,4 +1,7 @@
-# SigilYX — Not affiliated with Alteryx, Inc.
 [workspace]
-members = ["sigilyx", "sigilyx-python"]
+members = ["sigilyx", "sigilyx-python", "benchmarks/rust"]
 resolver = "2"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
