@@ -7,7 +7,12 @@ We welcome contributions! This page covers the essentials — see the full [Cont
 ```bash
 git clone https://github.com/sigilweaver/sigilyx.git
 cd sigilyx
-python -m venv .venv && .venv/Scripts/activate  # or source .venv/bin/activate
+python -m venv .venv
+
+# Activate the virtual environment:
+# Windows:   .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+
 pip install maturin polars pyarrow pandas
 maturin develop --release
 ```
