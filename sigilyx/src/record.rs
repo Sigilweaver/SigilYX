@@ -16,9 +16,9 @@ pub enum FieldValue {
     /// FixedDecimal stored as a formatted string to avoid precision loss.
     Decimal(Option<String>),
     String(Option<String>),
-    Date(Option<String>),      // "YYYY-MM-DD"
-    Time(Option<String>),      // "HH:MM:SS"
-    DateTime(Option<String>),  // "YYYY-MM-DD HH:MM:SS"
+    Date(Option<String>),     // "YYYY-MM-DD"
+    Time(Option<String>),     // "HH:MM:SS"
+    DateTime(Option<String>), // "YYYY-MM-DD HH:MM:SS"
     Blob(Option<Vec<u8>>),
 }
 
@@ -48,10 +48,7 @@ pub fn extract_field_index(
 /// need all values (e.g. for Python FFI where each call crosses the
 /// language boundary).
 #[inline]
-pub fn extract_all_fields(
-    record: &[u8],
-    fields: &[FieldMeta],
-) -> Result<Vec<FieldValue>> {
+pub fn extract_all_fields(record: &[u8], fields: &[FieldMeta]) -> Result<Vec<FieldValue>> {
     let mut values = Vec::with_capacity(fields.len());
     for field in fields {
         values.push(extract_field(record, field)?);
@@ -69,7 +66,10 @@ pub fn extract_field(record: &[u8], field: &FieldMeta) -> Result<FieldValue> {
     if required > record.len() {
         return Err(crate::error::YxdbError::ConversionError(format!(
             "record too short: need {} bytes for field '{}' at offset {}, but record is {} bytes",
-            required, field.name, off, record.len()
+            required,
+            field.name,
+            off,
+            record.len()
         )));
     }
 
@@ -175,34 +175,30 @@ pub fn extract_field(record: &[u8], field: &FieldMeta) -> Result<FieldValue> {
             }
         }
 
-        FieldType::VString => {
-            match locate_var_data(record, off) {
-                None => Ok(FieldValue::String(None)),
-                Some(bytes) if bytes.is_empty() => Ok(FieldValue::String(Some(String::new()))),
-                Some(bytes) => {
-                    let s = match std::str::from_utf8(bytes) {
-                        Ok(s) => s.to_owned(),
-                        Err(_) => String::from_utf8_lossy(bytes).into_owned(),
-                    };
-                    Ok(FieldValue::String(Some(s)))
-                }
+        FieldType::VString => match locate_var_data(record, off) {
+            None => Ok(FieldValue::String(None)),
+            Some([]) => Ok(FieldValue::String(Some(String::new()))),
+            Some(bytes) => {
+                let s = match std::str::from_utf8(bytes) {
+                    Ok(s) => s.to_owned(),
+                    Err(_) => String::from_utf8_lossy(bytes).into_owned(),
+                };
+                Ok(FieldValue::String(Some(s)))
             }
-        }
+        },
 
-        FieldType::VWString => {
-            match locate_var_data(record, off) {
-                None => Ok(FieldValue::String(None)),
-                Some(bytes) if bytes.is_empty() => Ok(FieldValue::String(Some(String::new()))),
-                Some(bytes) => {
-                    let code_units: Vec<u16> = bytes
-                        .chunks_exact(2)
-                        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                        .collect();
-                    let s = String::from_utf16_lossy(&code_units);
-                    Ok(FieldValue::String(Some(s)))
-                }
+        FieldType::VWString => match locate_var_data(record, off) {
+            None => Ok(FieldValue::String(None)),
+            Some([]) => Ok(FieldValue::String(Some(String::new()))),
+            Some(bytes) => {
+                let code_units: Vec<u16> = bytes
+                    .chunks_exact(2)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .collect();
+                let s = String::from_utf16_lossy(&code_units);
+                Ok(FieldValue::String(Some(s)))
             }
-        }
+        },
 
         FieldType::Date => {
             if record[off + 10] == 1 {
@@ -311,9 +307,8 @@ pub fn parse_var_data(record: &[u8], start: usize) -> Option<Vec<u8>> {
 /// whether it's a "small" block (low bit set → length = byte >> 1) or a "normal"
 /// block (4-byte LE length, divided by 2).
 #[inline]
-pub fn locate_var_data<'a>(record: &'a [u8], start: usize) -> Option<&'a [u8]> {
-    let fixed_portion =
-        u32::from_le_bytes(record[start..start + 4].try_into().unwrap()) as usize;
+pub fn locate_var_data(record: &[u8], start: usize) -> Option<&[u8]> {
+    let fixed_portion = u32::from_le_bytes(record[start..start + 4].try_into().unwrap()) as usize;
 
     if fixed_portion == 0 {
         return Some(&[]); // empty, not null
@@ -333,7 +328,8 @@ pub fn locate_var_data<'a>(record: &'a [u8], start: usize) -> Option<&'a [u8]> {
     // Variable-length: offset into the record buffer
     let block_start = start + (fixed_portion & 0x7FFFFFFF);
     if block_start >= record.len() {
-        return Some(&[]);
+        // Corrupt: variable offset points past record boundary
+        return None;
     }
 
     let first_byte = record[block_start];
@@ -343,13 +339,15 @@ pub fn locate_var_data<'a>(record: &'a [u8], start: usize) -> Option<&'a [u8]> {
         let blob_start = block_start + 1;
         let blob_end = blob_start + blob_len;
         if blob_end > record.len() {
-            return Some(&[]);
+            // Corrupt: small block length exceeds record boundary
+            return None;
         }
         Some(&record[blob_start..blob_end])
     } else {
         // Normal block: 4-byte LE length (divided by 2)
         if block_start + 4 > record.len() {
-            return Some(&[]);
+            // Corrupt: insufficient bytes for normal block header
+            return None;
         }
         let raw_len =
             u32::from_le_bytes(record[block_start..block_start + 4].try_into().unwrap()) as usize;
@@ -357,7 +355,8 @@ pub fn locate_var_data<'a>(record: &'a [u8], start: usize) -> Option<&'a [u8]> {
         let blob_start = block_start + 4;
         let blob_end = blob_start + blob_len;
         if blob_end > record.len() {
-            return Some(&[]);
+            // Corrupt: normal block length exceeds record boundary
+            return None;
         }
         Some(&record[blob_start..blob_end])
     }
@@ -421,10 +420,7 @@ mod tests {
             extract_field(&[0], &field).unwrap(),
             FieldValue::Bool(Some(false))
         );
-        assert_eq!(
-            extract_field(&[2], &field).unwrap(),
-            FieldValue::Bool(None)
-        );
+        assert_eq!(extract_field(&[2], &field).unwrap(), FieldValue::Bool(None));
     }
 
     #[test]
@@ -496,8 +492,8 @@ mod tests {
         // 0x80000004 = high bit set, offset 4
         let mut record = Vec::new();
         record.extend_from_slice(&0x80000004u32.to_le_bytes()); // fixed portion
-        // The block starts at start + (0x80000004 & 0x7FFFFFFF) = 0 + 4 = byte 4
-        // Small block header: length 3 → (3 << 1) | 1 = 7
+                                                                // The block starts at start + (0x80000004 & 0x7FFFFFFF) = 0 + 4 = byte 4
+                                                                // Small block header: length 3 → (3 << 1) | 1 = 7
         record.push(7);
         record.extend_from_slice(b"ABC");
         let data = locate_var_data(&record, 0);
@@ -509,7 +505,7 @@ mod tests {
         // Normal block: first byte has low bit clear, 4-byte LE length (raw_len / 2 = actual length)
         let mut record = Vec::new();
         record.extend_from_slice(&0x80000004u32.to_le_bytes()); // fixed portion
-        // Block at byte 4: 4-byte header, length in bytes = raw_len / 2
+                                                                // Block at byte 4: 4-byte header, length in bytes = raw_len / 2
         let actual_len = 5u32;
         let raw_len = actual_len * 2;
         record.extend_from_slice(&raw_len.to_le_bytes());
@@ -527,8 +523,20 @@ mod tests {
         record[5] = 1; // true
 
         let fields = vec![
-            FieldMeta { name: "num".into(), field_type: FieldType::Int32, size: 4, scale: 0, offset: 0 },
-            FieldMeta { name: "flag".into(), field_type: FieldType::Bool, size: 1, scale: 0, offset: 5 },
+            FieldMeta {
+                name: "num".into(),
+                field_type: FieldType::Int32,
+                size: 4,
+                scale: 0,
+                offset: 0,
+            },
+            FieldMeta {
+                name: "flag".into(),
+                field_type: FieldType::Bool,
+                size: 1,
+                scale: 0,
+                offset: 5,
+            },
         ];
         let vals = extract_all_fields(&record, &fields).unwrap();
         assert_eq!(vals.len(), 2);
@@ -539,50 +547,96 @@ mod tests {
     #[test]
     fn extract_field_index_out_of_range() {
         let record = vec![0u8; 5];
-        let fields = vec![
-            FieldMeta { name: "x".into(), field_type: FieldType::Int32, size: 4, scale: 0, offset: 0 },
-        ];
+        let fields = vec![FieldMeta {
+            name: "x".into(),
+            field_type: FieldType::Int32,
+            size: 4,
+            scale: 0,
+            offset: 0,
+        }];
         assert!(extract_field_index(&record, &fields, 1).is_err());
     }
 
     #[test]
     fn extract_field_record_too_short() {
         let record = vec![0u8; 2]; // too short for Int32 (needs 5)
-        let field = FieldMeta { name: "x".into(), field_type: FieldType::Int32, size: 4, scale: 0, offset: 0 };
+        let field = FieldMeta {
+            name: "x".into(),
+            field_type: FieldType::Int32,
+            size: 4,
+            scale: 0,
+            offset: 0,
+        };
         assert!(extract_field(&record, &field).is_err());
     }
 
     #[test]
     fn extract_byte_values() {
-        let field = FieldMeta { name: "b".into(), field_type: FieldType::Byte, size: 1, scale: 0, offset: 0 };
+        let field = FieldMeta {
+            name: "b".into(),
+            field_type: FieldType::Byte,
+            size: 1,
+            scale: 0,
+            offset: 0,
+        };
         // Non-null value 255
-        assert_eq!(extract_field(&[255, 0], &field).unwrap(), FieldValue::Byte(Some(255)));
+        assert_eq!(
+            extract_field(&[255, 0], &field).unwrap(),
+            FieldValue::Byte(Some(255))
+        );
         // Non-null value 0
-        assert_eq!(extract_field(&[0, 0], &field).unwrap(), FieldValue::Byte(Some(0)));
+        assert_eq!(
+            extract_field(&[0, 0], &field).unwrap(),
+            FieldValue::Byte(Some(0))
+        );
         // Null
-        assert_eq!(extract_field(&[0, 1], &field).unwrap(), FieldValue::Byte(None));
+        assert_eq!(
+            extract_field(&[0, 1], &field).unwrap(),
+            FieldValue::Byte(None)
+        );
     }
 
     #[test]
     fn extract_int16_values() {
-        let field = FieldMeta { name: "i".into(), field_type: FieldType::Int16, size: 2, scale: 0, offset: 0 };
+        let field = FieldMeta {
+            name: "i".into(),
+            field_type: FieldType::Int16,
+            size: 2,
+            scale: 0,
+            offset: 0,
+        };
         // i16::MIN = -32768
         let mut rec = i16::MIN.to_le_bytes().to_vec();
         rec.push(0); // not null
-        assert_eq!(extract_field(&rec, &field).unwrap(), FieldValue::Int16(Some(i16::MIN)));
+        assert_eq!(
+            extract_field(&rec, &field).unwrap(),
+            FieldValue::Int16(Some(i16::MIN))
+        );
         // Null
         let mut rec = [0u8; 3];
         rec[2] = 1;
-        assert_eq!(extract_field(&rec, &field).unwrap(), FieldValue::Int16(None));
+        assert_eq!(
+            extract_field(&rec, &field).unwrap(),
+            FieldValue::Int16(None)
+        );
     }
 
     #[test]
     fn extract_double_values() {
-        let field = FieldMeta { name: "d".into(), field_type: FieldType::Double, size: 8, scale: 0, offset: 0 };
+        let field = FieldMeta {
+            name: "d".into(),
+            field_type: FieldType::Double,
+            size: 8,
+            scale: 0,
+            offset: 0,
+        };
         // Infinity
         let mut rec = f64::INFINITY.to_le_bytes().to_vec();
         rec.push(0);
-        assert_eq!(extract_field(&rec, &field).unwrap(), FieldValue::Double(Some(f64::INFINITY)));
+        assert_eq!(
+            extract_field(&rec, &field).unwrap(),
+            FieldValue::Double(Some(f64::INFINITY))
+        );
         // NaN
         let mut rec = f64::NAN.to_le_bytes().to_vec();
         rec.push(0);
@@ -593,28 +647,49 @@ mod tests {
         // Null
         let mut rec = [0u8; 9];
         rec[8] = 1;
-        assert_eq!(extract_field(&rec, &field).unwrap(), FieldValue::Double(None));
+        assert_eq!(
+            extract_field(&rec, &field).unwrap(),
+            FieldValue::Double(None)
+        );
     }
 
     #[test]
     fn extract_float_values() {
-        let field = FieldMeta { name: "f".into(), field_type: FieldType::Float, size: 4, scale: 0, offset: 0 };
-        let mut rec = 3.14f32.to_le_bytes().to_vec();
+        let field = FieldMeta {
+            name: "f".into(),
+            field_type: FieldType::Float,
+            size: 4,
+            scale: 0,
+            offset: 0,
+        };
+        let mut rec = 1.5_f32.to_le_bytes().to_vec();
         rec.push(0);
         match extract_field(&rec, &field).unwrap() {
-            FieldValue::Float(Some(v)) => assert!((v - 3.14).abs() < 0.001),
+            FieldValue::Float(Some(v)) => assert!((v - 1.5).abs() < 0.001),
             other => panic!("expected float, got {other:?}"),
         }
     }
 
     #[test]
     fn extract_int64_boundary() {
-        let field = FieldMeta { name: "i".into(), field_type: FieldType::Int64, size: 8, scale: 0, offset: 0 };
+        let field = FieldMeta {
+            name: "i".into(),
+            field_type: FieldType::Int64,
+            size: 8,
+            scale: 0,
+            offset: 0,
+        };
         let mut rec = i64::MAX.to_le_bytes().to_vec();
         rec.push(0);
-        assert_eq!(extract_field(&rec, &field).unwrap(), FieldValue::Int64(Some(i64::MAX)));
+        assert_eq!(
+            extract_field(&rec, &field).unwrap(),
+            FieldValue::Int64(Some(i64::MAX))
+        );
         let mut rec = i64::MIN.to_le_bytes().to_vec();
         rec.push(0);
-        assert_eq!(extract_field(&rec, &field).unwrap(), FieldValue::Int64(Some(i64::MIN)));
+        assert_eq!(
+            extract_field(&rec, &field).unwrap(),
+            FieldValue::Int64(Some(i64::MIN))
+        );
     }
 }

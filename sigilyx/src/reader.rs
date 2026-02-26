@@ -4,12 +4,12 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 
+use arrow::bitmap::MutableBitmap;
 use memmap2::Mmap;
 use polars::prelude::*;
-use arrow::bitmap::MutableBitmap;
 use rayon::prelude::*;
 
-use crate::error::{YxdbError, Result};
+use crate::error::{Result, YxdbError};
 use crate::field::{FieldMeta, FieldType};
 use crate::header::{self, YxdbHeader, HEADER_SIZE};
 use crate::lzf::{self, CompressionAlgorithm};
@@ -32,7 +32,7 @@ pub struct YxdbReader {
     lzf_out: Vec<u8>,
     lzf_out_idx: usize,
     lzf_out_size: usize,
-    lzf_in: Vec<u8>,         // reusable compressed-input buffer
+    lzf_in: Vec<u8>, // reusable compressed-input buffer
     current_record: u64,
 }
 
@@ -44,7 +44,15 @@ impl YxdbReader {
 
         // Read 512-byte header
         let mut header_buf = [0u8; HEADER_SIZE];
-        stream.read_exact(&mut header_buf)?;
+        match stream.read_exact(&mut header_buf) {
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Err(YxdbError::InvalidFile(
+                    "file too small to be a valid YXDB (< 512 bytes)".into(),
+                ));
+            }
+            Err(e) => return Err(e.into()),
+            Ok(_) => {}
+        }
         let header = YxdbHeader::parse(&header_buf)?;
 
         // Read UTF-16LE metadata
@@ -63,11 +71,36 @@ impl YxdbReader {
         // Parse fields
         let fields = header::parse_meta_xml(&meta_xml)?;
 
-        // Compute fixed record size
+        // Compute fixed record size and validate field offsets
         let fixed_size: usize = fields
             .last()
             .map(|f| f.offset + f.field_type.fixed_bytes(f.size))
             .unwrap_or(0);
+
+        // Sanity-check: reject schemas where computed fixed_size is unreasonably
+        // large.  This guards the `unsafe` code paths that index into record
+        // buffers using field offsets parsed from the XML metadata.
+        const MAX_REASONABLE_RECORD_SIZE: usize = 64 * 1024 * 1024; // 64 MiB
+        if fixed_size > MAX_REASONABLE_RECORD_SIZE {
+            return Err(YxdbError::InvalidFile(format!(
+                "computed fixed record size ({fixed_size} bytes) exceeds sanity limit — \
+                 the XML metadata is likely corrupt"
+            )));
+        }
+
+        // Validate that every field's offset + size fits within the fixed portion
+        for f in &fields {
+            let end = f.offset + f.field_type.fixed_bytes(f.size);
+            if end > fixed_size {
+                return Err(YxdbError::InvalidFile(format!(
+                    "field '{}' (offset {} + {} bytes) exceeds computed fixed record size ({})",
+                    f.name,
+                    f.offset,
+                    f.field_type.fixed_bytes(f.size),
+                    fixed_size
+                )));
+            }
+        }
         let has_var = fields.iter().any(|f| f.field_type.is_variable());
 
         let compression = CompressionAlgorithm::from_version_id(header.compression_version)?;
@@ -148,6 +181,42 @@ impl YxdbReader {
     pub fn into_dataframe_projected(mut self, columns: Option<&[&str]>) -> Result<DataFrame> {
         let num_records = self.header.num_records as usize;
         let fields = std::mem::take(&mut self.fields);
+
+        // Fast path: 0-row DataFrame — return empty columns with correct schema
+        if num_records == 0 {
+            let projected_fields: Vec<&FieldMeta> = match columns {
+                Some(names) => {
+                    let field_map: std::collections::HashMap<&str, &FieldMeta> =
+                        fields.iter().map(|f| (f.name.as_str(), f)).collect();
+                    let unknown: Vec<&str> = names
+                        .iter()
+                        .copied()
+                        .filter(|n| !field_map.contains_key(n))
+                        .collect();
+                    if !unknown.is_empty() {
+                        return Err(YxdbError::InvalidFile(format!(
+                            "requested columns not found in file: {:?}",
+                            unknown
+                        )));
+                    }
+                    names
+                        .iter()
+                        .filter_map(|n| field_map.get(n).copied())
+                        .collect()
+                }
+                None => fields.iter().collect(),
+            };
+            let empty_cols: Vec<Column> = projected_fields
+                .iter()
+                .map(|f| {
+                    let series = empty_series_for_field(f);
+                    Column::from(series)
+                })
+                .collect();
+            return DataFrame::new(0, empty_cols)
+                .map_err(|e| YxdbError::ConversionError(e.to_string()));
+        }
+
         let fixed_size = self.fixed_size;
         let has_var = self.has_var;
         let compression = self.compression;
@@ -157,6 +226,9 @@ impl YxdbReader {
         let mmap = {
             let inner_stream = self.stream;
             let file = inner_stream.into_inner();
+            // SAFETY: The file is opened read-only and its lifetime is bound to
+            // this scope.  The mmap is not shared across threads and is only
+            // accessed via immutable references after creation.
             unsafe { Mmap::map(&file) }?
         };
         let data_offset = {
@@ -181,9 +253,7 @@ impl YxdbReader {
                 // Version 0: no block framing — records stored directly in the stream
                 Cow::Borrowed(raw_data)
             }
-            Some(algo) => {
-                Cow::Owned(decompress_blocks(raw_data, algo)?)
-            }
+            Some(algo) => Cow::Owned(decompress_blocks(raw_data, algo)?),
         };
 
         // Phase 3: Compute record boundaries
@@ -193,10 +263,12 @@ impl YxdbReader {
             let mut offset = 0usize;
             for _ in 0..num_records {
                 let var_start = offset + fixed_size;
-                if var_start + 4 > all_data.len() { break; }
-                let var_len = u32::from_le_bytes(
-                    all_data[var_start..var_start + 4].try_into().unwrap(),
-                ) as usize;
+                if var_start + 4 > all_data.len() {
+                    break;
+                }
+                let var_len =
+                    u32::from_le_bytes(all_data[var_start..var_start + 4].try_into().unwrap())
+                        as usize;
                 offset = var_start + 4 + var_len;
                 ends.push(offset);
             }
@@ -211,12 +283,26 @@ impl YxdbReader {
         let projected_fields: Vec<&FieldMeta> = match columns {
             Some(names) => {
                 let name_set: HashSet<&str> = names.iter().copied().collect();
-                let field_map: HashMap<&str, &FieldMeta> = fields.iter()
+                let field_map: HashMap<&str, &FieldMeta> = fields
+                    .iter()
                     .filter(|f| name_set.contains(f.name.as_str()))
                     .map(|f| (f.name.as_str(), f))
                     .collect();
+                // Check for unknown column names
+                let unknown: Vec<&str> = names
+                    .iter()
+                    .copied()
+                    .filter(|n| !field_map.contains_key(n))
+                    .collect();
+                if !unknown.is_empty() {
+                    return Err(YxdbError::InvalidFile(format!(
+                        "requested columns not found in file: {:?}",
+                        unknown
+                    )));
+                }
                 // Preserve caller's requested column order
-                names.iter()
+                names
+                    .iter()
                     .filter_map(|n| field_map.get(n).copied())
                     .collect()
             }
@@ -230,21 +316,22 @@ impl YxdbReader {
         const MIN_COLS_FOR_PAR: usize = 6;
         const MIN_DATA_FOR_PAR: usize = 10 * 1024 * 1024; // 10 MB
 
-        let built_columns: Result<Vec<Column>> = if projected_fields.len() >= MIN_COLS_FOR_PAR
-            || all_data.len() >= MIN_DATA_FOR_PAR
-        {
-            projected_fields
-                .par_iter()
-                .map(|field| build_column(field, &all_data, &bounds, num_records))
-                .collect()
-        } else {
-            projected_fields
-                .iter()
-                .map(|field| build_column(field, &all_data, &bounds, num_records))
-                .collect()
-        };
+        let built_columns: Result<Vec<Column>> =
+            if projected_fields.len() >= MIN_COLS_FOR_PAR || all_data.len() >= MIN_DATA_FOR_PAR {
+                projected_fields
+                    .par_iter()
+                    .map(|field| build_column(field, &all_data, &bounds, num_records))
+                    .collect()
+            } else {
+                projected_fields
+                    .iter()
+                    .map(|field| build_column(field, &all_data, &bounds, num_records))
+                    .collect()
+            };
 
-        DataFrame::new(built_columns?).map_err(|e| YxdbError::ConversionError(e.to_string()))
+        let cols = built_columns?;
+        let height = cols.first().map_or(0, |c| c.len());
+        DataFrame::new(height, cols).map_err(|e| YxdbError::ConversionError(e.to_string()))
     }
 
     /// Read the next batch of up to `batch_size` records as a [`DataFrame`].
@@ -271,7 +358,11 @@ impl YxdbReader {
     ///     println!("projected batch: {} cols", batch.width());
     /// }
     /// ```
-    pub fn next_batch(&mut self, batch_size: usize, columns: Option<&[&str]>) -> Result<Option<DataFrame>> {
+    pub fn next_batch(
+        &mut self,
+        batch_size: usize,
+        columns: Option<&[&str]>,
+    ) -> Result<Option<DataFrame>> {
         if self.current_record >= self.header.num_records {
             return Ok(None);
         }
@@ -282,12 +373,27 @@ impl YxdbReader {
         // Determine which field indices to materialise and clone only those fields.
         let projected_indices: Vec<usize> = match columns {
             Some(names) => {
-                let name_set: HashSet<&str> = names.iter().copied().collect();
-                self.fields
+                let field_map: HashMap<&str, usize> = self
+                    .fields
                     .iter()
                     .enumerate()
-                    .filter(|(_, f)| name_set.contains(f.name.as_str()))
-                    .map(|(i, _)| i)
+                    .map(|(i, f)| (f.name.as_str(), i))
+                    .collect();
+                // Check for unknown column names
+                let unknown: Vec<&str> = names
+                    .iter()
+                    .copied()
+                    .filter(|n| !field_map.contains_key(n))
+                    .collect();
+                if !unknown.is_empty() {
+                    return Err(YxdbError::InvalidFile(format!(
+                        "requested columns not found in file: {:?}",
+                        unknown
+                    )));
+                }
+                names
+                    .iter()
+                    .filter_map(|n| field_map.get(n).copied())
                     .collect()
             }
             None => (0..self.fields.len()).collect(),
@@ -328,7 +434,8 @@ impl YxdbReader {
             .map(Column::from)
             .collect();
 
-        let df = DataFrame::new(columns)
+        let height = columns.first().map_or(0, |c| c.len());
+        let df = DataFrame::new(height, columns)
             .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
         Ok(Some(df))
     }
@@ -368,7 +475,9 @@ impl YxdbReader {
     ///
     /// Only called when `self.compression` is `Some(_)` (block-framed data).
     fn read_next_lzf_block(&mut self) -> Result<()> {
-        let algo = self.compression.expect("read_next_lzf_block called with no compression");
+        let algo = self
+            .compression
+            .expect("read_next_lzf_block called with no compression");
 
         // Read 4-byte block length
         let mut len_buf = [0u8; 4];
@@ -389,7 +498,15 @@ impl YxdbReader {
             // Reuse the lzf_in buffer to avoid per-block heap allocation
             self.lzf_in.resize(block_len, 0);
             self.stream.read_exact(&mut self.lzf_in[..block_len])?;
-            self.lzf_out_size = lzf::decompress_block(algo, &self.lzf_in[..block_len], &mut self.lzf_out)?;
+            // Ensure output buffer is large enough for oversized blocks.
+            // Standard blocks decompress to at most BLOCK_SIZE (262144),
+            // but oversized records may produce larger output.
+            let min_out = 262144usize.max(block_len * 10);
+            if self.lzf_out.len() < min_out {
+                self.lzf_out.resize(min_out, 0);
+            }
+            self.lzf_out_size =
+                lzf::decompress_block(algo, &self.lzf_in[..block_len], &mut self.lzf_out)?;
         }
 
         self.lzf_out_idx = 0;
@@ -408,13 +525,13 @@ fn decompress_blocks(raw_data: &[u8], algo: CompressionAlgorithm) -> Result<Vec<
     let mut blocks: Vec<(usize, usize, bool)> = Vec::new(); // (data_offset, length, is_uncompressed)
     let mut pos = 0usize;
     while pos + 4 <= raw_data.len() {
-        let raw_len = u32::from_le_bytes(
-            raw_data[pos..pos + 4].try_into().unwrap(),
-        ) as usize;
+        let raw_len = u32::from_le_bytes(raw_data[pos..pos + 4].try_into().unwrap()) as usize;
         pos += 4;
         let is_uncompressed = raw_len & 0x80000000 != 0;
         let block_len = raw_len & 0x7FFFFFFF;
-        if pos + block_len > raw_data.len() { break; }
+        if pos + block_len > raw_data.len() {
+            break;
+        }
         blocks.push((pos, block_len, is_uncompressed));
         pos += block_len;
     }
@@ -425,10 +542,21 @@ fn decompress_blocks(raw_data: &[u8], algo: CompressionAlgorithm) -> Result<Vec<
     let num_blocks = blocks.len();
 
     // Pre-compute expected output sizes and cumulative offsets.
+    // For compressed blocks, the decompressed size is at most BLOCK_SIZE for
+    // standard blocks, but may be larger if the writer emitted an oversized
+    // block (e.g. a single record > BLOCK_SIZE). Use a conservative estimate
+    // of max(BLOCK_SIZE, compressed_length * 10) to handle both cases, and
+    // retry with a larger buffer if decompression fails.
     let mut block_offsets: Vec<usize> = Vec::with_capacity(num_blocks + 1);
     block_offsets.push(0);
     for (idx, &(_offset, length, is_uncompressed)) in blocks.iter().enumerate() {
-        let expected_output = if is_uncompressed { length } else { BLOCK_SIZE };
+        let expected_output = if is_uncompressed {
+            length
+        } else {
+            // Most blocks decompress to exactly BLOCK_SIZE. However, oversized
+            // records may produce blocks > BLOCK_SIZE. Use a generous estimate.
+            BLOCK_SIZE.max(length * 10)
+        };
         block_offsets.push(block_offsets[idx] + expected_output);
     }
     let max_total = *block_offsets.last().unwrap_or(&0);
@@ -442,15 +570,20 @@ fn decompress_blocks(raw_data: &[u8], algo: CompressionAlgorithm) -> Result<Vec<
     //
     // Wrap the raw pointer so we can share it across Rayon threads.
     struct SendSyncPtr(*mut u8);
+    // SAFETY: The raw pointer is only used to produce disjoint mutable slices
+    // of `all_data`, one per block. No two threads access the same range.
     unsafe impl Send for SendSyncPtr {}
+    // SAFETY: Same rationale — concurrent reads/writes target disjoint sub-slices.
     unsafe impl Sync for SendSyncPtr {}
     impl SendSyncPtr {
         /// Return a mutable slice starting at `offset` with length `len`.
         /// SAFETY: caller must ensure the range is valid and non-overlapping
         /// with any other concurrent slice from this pointer.
         #[inline]
+        #[allow(clippy::mut_from_ref)]
         unsafe fn slice_mut(&self, offset: usize, len: usize) -> &mut [u8] {
-            std::slice::from_raw_parts_mut(self.0.add(offset), len)
+            // SAFETY: Upheld by caller — see doc comment above.
+            unsafe { std::slice::from_raw_parts_mut(self.0.add(offset), len) }
         }
     }
     let ptr = SendSyncPtr(all_data_ptr);
@@ -462,6 +595,7 @@ fn decompress_blocks(raw_data: &[u8], algo: CompressionAlgorithm) -> Result<Vec<
             .map(|(idx, &(offset, length, is_uncompressed))| {
                 let dest_start = block_offsets[idx];
                 let dest_capacity = block_offsets[idx + 1] - dest_start;
+                // SAFETY: Each block writes to a disjoint sub-slice; indices are in-bounds.
                 let dest = unsafe { ptr.slice_mut(dest_start, dest_capacity) };
                 if is_uncompressed {
                     dest[..length].copy_from_slice(&raw_data[offset..offset + length]);
@@ -479,6 +613,7 @@ fn decompress_blocks(raw_data: &[u8], algo: CompressionAlgorithm) -> Result<Vec<
             .map(|(idx, &(offset, length, is_uncompressed))| {
                 let dest_start = block_offsets[idx];
                 let dest_capacity = block_offsets[idx + 1] - dest_start;
+                // SAFETY: Each block writes to a disjoint sub-slice; indices are in-bounds.
                 let dest = unsafe { ptr.slice_mut(dest_start, dest_capacity) };
                 if is_uncompressed {
                     dest[..length].copy_from_slice(&raw_data[offset..offset + length]);
@@ -496,6 +631,12 @@ fn decompress_blocks(raw_data: &[u8], algo: CompressionAlgorithm) -> Result<Vec<
     for (idx, &actual_size) in block_sizes.iter().enumerate() {
         let read_pos = block_offsets[idx];
         if write_pos != read_pos && actual_size > 0 {
+            // SAFETY: `write_pos < read_pos` is guaranteed because we only
+            // compact forward and block offsets are monotonically increasing.
+            // The source and destination regions do not extend beyond
+            // `all_data.len()` because both are bounded by `block_offsets`
+            // and `actual_size <= BLOCK_SIZE`.  We use `ptr::copy` (not
+            // `copy_nonoverlapping`) because the regions may overlap.
             unsafe {
                 std::ptr::copy(
                     all_data.as_ptr().add(read_pos),
@@ -559,6 +700,41 @@ impl RecordBounds {
     }
 }
 
+/// Create an empty Series (0 rows) with the correct dtype for a YXDB field.
+fn empty_series_for_field(field: &FieldMeta) -> Series {
+    use crate::field::FieldType;
+    let name = PlSmallStr::from(field.name.as_str());
+    match field.field_type {
+        FieldType::Bool => Series::new_empty(name, &DataType::Boolean),
+        FieldType::Byte | FieldType::Int16 => Series::new_empty(name, &DataType::Int16),
+        FieldType::Int32 => Series::new_empty(name, &DataType::Int32),
+        FieldType::Int64 => Series::new_empty(name, &DataType::Int64),
+        FieldType::Float => Series::new_empty(name, &DataType::Float32),
+        FieldType::Double => Series::new_empty(name, &DataType::Float64),
+        FieldType::FixedDecimal => {
+            // YXDB `size` is the total ASCII char width (digits + sign + decimal point).
+            // Invert the writer's formula: precision = size - 1 (sign) - 1 (decimal point if scale > 0)
+            let raw_p = if field.size > 1 {
+                field.size - 1 - if field.scale > 0 { 1 } else { 0 }
+            } else {
+                19 // fallback for legacy files
+            };
+            let p = raw_p.min(38); // Polars caps precision at 38
+            let s = field.scale;
+            Series::new_empty(name, &DataType::Decimal(p, s))
+        }
+        FieldType::String | FieldType::WString | FieldType::VString | FieldType::VWString => {
+            Series::new_empty(name, &DataType::String)
+        }
+        FieldType::Date => Series::new_empty(name, &DataType::Date),
+        FieldType::Time => Series::new_empty(name, &DataType::Time),
+        FieldType::DateTime => {
+            Series::new_empty(name, &DataType::Datetime(TimeUnit::Microseconds, None))
+        }
+        FieldType::Blob | FieldType::SpatialObj => Series::new_empty(name, &DataType::Binary),
+    }
+}
+
 /// Build a single column from decompressed record data.
 fn build_column(
     field: &FieldMeta,
@@ -593,7 +769,7 @@ fn parse_decimal_i128(s: &str, scale: usize) -> i128 {
     };
     let mut result: i128 = 0;
     for &b in int_part.as_bytes() {
-        if b >= b'0' && b <= b'9' {
+        if b.is_ascii_digit() {
             result = result * 10 + (b - b'0') as i128;
         }
     }
@@ -602,12 +778,16 @@ fn parse_decimal_i128(s: &str, scale: usize) -> i128 {
         result *= 10;
         if i < frac_bytes.len() {
             let b = frac_bytes[i];
-            if b >= b'0' && b <= b'9' {
+            if b.is_ascii_digit() {
                 result += (b - b'0') as i128;
             }
         }
     }
-    if neg { -result } else { result }
+    if neg {
+        -result
+    } else {
+        result
+    }
 }
 
 // ── Column builders ────────────────────────────────────────────────────
@@ -618,15 +798,49 @@ fn parse_decimal_i128(s: &str, scale: usize) -> i128 {
 /// validity buffers, avoiding the overhead of `Vec<Option<T>>` → `Series::new`.
 /// String types use Polars' `StringChunkedBuilder` (already optimal).
 enum ColumnBuilder {
-    Bool { values: Vec<bool>, validity: MutableBitmap, has_nulls: bool },
-    Byte { values: Vec<i16>, validity: MutableBitmap, has_nulls: bool },
-    Int16 { values: Vec<i16>, validity: MutableBitmap, has_nulls: bool },
-    Int32 { values: Vec<i32>, validity: MutableBitmap, has_nulls: bool },
-    Int64 { values: Vec<i64>, validity: MutableBitmap, has_nulls: bool },
-    Float { values: Vec<f32>, validity: MutableBitmap, has_nulls: bool },
-    Double { values: Vec<f64>, validity: MutableBitmap, has_nulls: bool },
+    Bool {
+        values: Vec<bool>,
+        validity: MutableBitmap,
+        has_nulls: bool,
+    },
+    Byte {
+        values: Vec<i16>,
+        validity: MutableBitmap,
+        has_nulls: bool,
+    },
+    Int16 {
+        values: Vec<i16>,
+        validity: MutableBitmap,
+        has_nulls: bool,
+    },
+    Int32 {
+        values: Vec<i32>,
+        validity: MutableBitmap,
+        has_nulls: bool,
+    },
+    Int64 {
+        values: Vec<i64>,
+        validity: MutableBitmap,
+        has_nulls: bool,
+    },
+    Float {
+        values: Vec<f32>,
+        validity: MutableBitmap,
+        has_nulls: bool,
+    },
+    Double {
+        values: Vec<f64>,
+        validity: MutableBitmap,
+        has_nulls: bool,
+    },
     /// FixedDecimal stored as i128 (unscaled) for lossless Polars Decimal construction.
-    Decimal { values: Vec<i128>, validity: MutableBitmap, has_nulls: bool, precision: usize, scale: usize },
+    Decimal {
+        values: Vec<i128>,
+        validity: MutableBitmap,
+        has_nulls: bool,
+        precision: usize,
+        scale: usize,
+    },
     /// Zero-allocation string builder using Polars StringChunkedBuilder.
     /// `str_buf` is a reusable buffer for UTF-16 → UTF-8 transcoding.
     StrBuilder {
@@ -634,11 +848,23 @@ enum ColumnBuilder {
         str_buf: String,
     },
     /// Date stored as days-since-epoch (i32) for direct Polars Date construction.
-    DateDays { values: Vec<i32>, validity: MutableBitmap, has_nulls: bool },
+    DateDays {
+        values: Vec<i32>,
+        validity: MutableBitmap,
+        has_nulls: bool,
+    },
     /// Time stored as nanoseconds since midnight for direct Polars Time construction.
-    TimeNs { values: Vec<i64>, validity: MutableBitmap, has_nulls: bool },
+    TimeNs {
+        values: Vec<i64>,
+        validity: MutableBitmap,
+        has_nulls: bool,
+    },
     /// DateTime stored as us-since-epoch (i64) for direct Polars Datetime construction.
-    DateTimeUs { values: Vec<i64>, validity: MutableBitmap, has_nulls: bool },
+    DateTimeUs {
+        values: Vec<i64>,
+        validity: MutableBitmap,
+        has_nulls: bool,
+    },
     Blob(Vec<Option<Vec<u8>>>),
 }
 
@@ -649,7 +875,9 @@ const UNIX_EPOCH_DAYS: i32 = 719_468;
 #[inline]
 fn parse_date_to_days(buf: &[u8]) -> Option<i32> {
     // buf must be at least 10 bytes: "YYYY-MM-DD"
-    if buf.len() < 10 { return None; }
+    if buf.len() < 10 {
+        return None;
+    }
     let y = parse_4_digits(buf)? as i32;
     let m = parse_2_digits(&buf[5..])? as u32;
     let d = parse_2_digits(&buf[8..])? as u32;
@@ -660,7 +888,9 @@ fn parse_date_to_days(buf: &[u8]) -> Option<i32> {
 /// Polars Time type stores values as i64 nanoseconds.
 #[inline]
 fn parse_time_to_ns(buf: &[u8]) -> Option<i64> {
-    if buf.len() < 8 { return None; }
+    if buf.len() < 8 {
+        return None;
+    }
     let h = parse_2_digits(buf)? as i64;
     let m = parse_2_digits(&buf[3..])? as i64;
     let s = parse_2_digits(&buf[6..])? as i64;
@@ -670,7 +900,9 @@ fn parse_time_to_ns(buf: &[u8]) -> Option<i64> {
 /// Parse "YYYY-MM-DD HH:MM:SS" ASCII bytes directly to us-since-Unix-epoch.
 #[inline]
 fn parse_datetime_to_us(buf: &[u8]) -> Option<i64> {
-    if buf.len() < 19 { return None; }
+    if buf.len() < 19 {
+        return None;
+    }
     let days = parse_date_to_days(buf)? as i64;
     let h = parse_2_digits(&buf[11..])? as i64;
     let min = parse_2_digits(&buf[14..])? as i64;
@@ -682,7 +914,9 @@ fn parse_datetime_to_us(buf: &[u8]) -> Option<i64> {
 fn parse_2_digits(b: &[u8]) -> Option<u16> {
     let d0 = b[0].wrapping_sub(b'0');
     let d1 = b[1].wrapping_sub(b'0');
-    if d0 > 9 || d1 > 9 { return None; }
+    if d0 > 9 || d1 > 9 {
+        return None;
+    }
     Some(d0 as u16 * 10 + d1 as u16)
 }
 
@@ -692,7 +926,9 @@ fn parse_4_digits(b: &[u8]) -> Option<u16> {
     let d1 = b[1].wrapping_sub(b'0') as u16;
     let d2 = b[2].wrapping_sub(b'0') as u16;
     let d3 = b[3].wrapping_sub(b'0') as u16;
-    if d0 > 9 || d1 > 9 || d2 > 9 || d3 > 9 { return None; }
+    if d0 > 9 || d1 > 9 || d2 > 9 || d3 > 9 {
+        return None;
+    }
     Some(d0 * 1000 + d1 * 100 + d2 * 10 + d3)
 }
 
@@ -715,7 +951,8 @@ fn civil_to_days(y: i32, m: u32, d: u32) -> i32 {
 #[inline(always)]
 unsafe fn read_bytes_unchecked<const N: usize>(buf: &[u8], off: usize) -> [u8; N] {
     let mut out = [0u8; N];
-    std::ptr::copy_nonoverlapping(buf.as_ptr().add(off), out.as_mut_ptr(), N);
+    // SAFETY: Upheld by caller — `off + N <= buf.len()`.
+    unsafe { std::ptr::copy_nonoverlapping(buf.as_ptr().add(off), out.as_mut_ptr(), N) };
     out
 }
 
@@ -729,6 +966,9 @@ fn transcode_utf16le(bytes: &[u8], out: &mut String) {
     let n = bytes.len() / 2;
     out.reserve(n);
 
+    // SAFETY: We maintain the UTF-8 invariant by only pushing valid UTF-8
+    // sequences — ASCII bytes are validated via `is_ascii` before push, and
+    // non-ASCII code units go through `char::from_u32` / `encode_utf8`.
     let v = unsafe { out.as_mut_vec() };
     let mut i = 0;
 
@@ -737,6 +977,9 @@ fn transcode_utf16le(bytes: &[u8], out: &mut String) {
     {
         use std::arch::x86_64::*;
         // SSE2 is always available on x86_64
+        // SAFETY: SSE2 intrinsics operate on the raw byte slice within bounds
+        // (guarded by `i + 16 <= bytes.len()`). Output bytes are valid UTF-8
+        // because we only fast-path pure-ASCII code units (< 128).
         unsafe {
             let zero = _mm_setzero_si128();
             // Mask to extract the high byte of each u16: 0xFF00 repeated
@@ -886,16 +1129,26 @@ impl ColumnBuilder {
                 values: Vec::with_capacity(capacity),
                 validity: MutableBitmap::with_capacity(capacity),
                 has_nulls: false,
-                precision: field.size,
+                // Invert writer's formula: YXDB size = precision + 1 (sign) + 1 (decimal point if scale > 0)
+                precision: {
+                    let raw_p = if field.size > 1 {
+                        field.size - 1 - if field.scale > 0 { 1 } else { 0 }
+                    } else {
+                        19
+                    };
+                    raw_p.min(38)
+                },
                 scale: field.scale,
             },
-            FieldType::String
-            | FieldType::WString
-            | FieldType::VString
-            | FieldType::VWString => ColumnBuilder::StrBuilder {
-                builder: StringChunkedBuilder::new(PlSmallStr::from(field.name.as_str()), capacity),
-                str_buf: String::with_capacity(64),
-            },
+            FieldType::String | FieldType::WString | FieldType::VString | FieldType::VWString => {
+                ColumnBuilder::StrBuilder {
+                    builder: StringChunkedBuilder::new(
+                        PlSmallStr::from(field.name.as_str()),
+                        capacity,
+                    ),
+                    str_buf: String::with_capacity(64),
+                }
+            }
             FieldType::Date => ColumnBuilder::DateDays {
                 values: Vec::with_capacity(capacity),
                 validity: MutableBitmap::with_capacity(capacity),
@@ -929,10 +1182,15 @@ impl ColumnBuilder {
     /// `field.offset + field.fixed_bytes() <= fixed_size <= record.len()`
     /// holds for all fixed-size accesses.
     #[inline]
+    #[allow(clippy::undocumented_unsafe_blocks)]
     fn push_from_record(&mut self, record: &[u8], field: &FieldMeta) -> Result<()> {
         let off = field.offset;
         match self {
-            ColumnBuilder::Bool { values, validity, has_nulls } => {
+            ColumnBuilder::Bool {
+                values,
+                validity,
+                has_nulls,
+            } => {
                 let b = unsafe { *record.get_unchecked(off) };
                 if b == 2 {
                     values.push(false);
@@ -943,220 +1201,232 @@ impl ColumnBuilder {
                     validity.push(true);
                 }
             }
-            ColumnBuilder::Byte { values, validity, has_nulls } => {
-                unsafe {
-                    if *record.get_unchecked(off + 1) == 1 {
-                        values.push(0);
-                        validity.push(false);
-                        *has_nulls = true;
-                    } else {
-                        values.push(*record.get_unchecked(off) as i16);
-                        validity.push(true);
-                    }
+            ColumnBuilder::Byte {
+                values,
+                validity,
+                has_nulls,
+            } => unsafe {
+                if *record.get_unchecked(off + 1) == 1 {
+                    values.push(0);
+                    validity.push(false);
+                    *has_nulls = true;
+                } else {
+                    values.push(*record.get_unchecked(off) as i16);
+                    validity.push(true);
                 }
-            }
-            ColumnBuilder::Int16 { values, validity, has_nulls } => {
-                unsafe {
-                    if *record.get_unchecked(off + 2) == 1 {
-                        values.push(0);
-                        validity.push(false);
-                        *has_nulls = true;
-                    } else {
-                        values.push(i16::from_le_bytes(read_bytes_unchecked::<2>(record, off)));
-                        validity.push(true);
-                    }
+            },
+            ColumnBuilder::Int16 {
+                values,
+                validity,
+                has_nulls,
+            } => unsafe {
+                if *record.get_unchecked(off + 2) == 1 {
+                    values.push(0);
+                    validity.push(false);
+                    *has_nulls = true;
+                } else {
+                    values.push(i16::from_le_bytes(read_bytes_unchecked::<2>(record, off)));
+                    validity.push(true);
                 }
-            }
-            ColumnBuilder::Int32 { values, validity, has_nulls } => {
-                unsafe {
-                    if *record.get_unchecked(off + 4) == 1 {
-                        values.push(0);
-                        validity.push(false);
-                        *has_nulls = true;
-                    } else {
-                        values.push(i32::from_le_bytes(read_bytes_unchecked::<4>(record, off)));
-                        validity.push(true);
-                    }
+            },
+            ColumnBuilder::Int32 {
+                values,
+                validity,
+                has_nulls,
+            } => unsafe {
+                if *record.get_unchecked(off + 4) == 1 {
+                    values.push(0);
+                    validity.push(false);
+                    *has_nulls = true;
+                } else {
+                    values.push(i32::from_le_bytes(read_bytes_unchecked::<4>(record, off)));
+                    validity.push(true);
                 }
-            }
-            ColumnBuilder::Int64 { values, validity, has_nulls } => {
-                unsafe {
-                    if *record.get_unchecked(off + 8) == 1 {
-                        values.push(0);
-                        validity.push(false);
-                        *has_nulls = true;
-                    } else {
-                        values.push(i64::from_le_bytes(read_bytes_unchecked::<8>(record, off)));
-                        validity.push(true);
-                    }
+            },
+            ColumnBuilder::Int64 {
+                values,
+                validity,
+                has_nulls,
+            } => unsafe {
+                if *record.get_unchecked(off + 8) == 1 {
+                    values.push(0);
+                    validity.push(false);
+                    *has_nulls = true;
+                } else {
+                    values.push(i64::from_le_bytes(read_bytes_unchecked::<8>(record, off)));
+                    validity.push(true);
                 }
-            }
-            ColumnBuilder::Float { values, validity, has_nulls } => {
-                unsafe {
-                    if *record.get_unchecked(off + 4) == 1 {
-                        values.push(0.0);
-                        validity.push(false);
-                        *has_nulls = true;
-                    } else {
-                        values.push(f32::from_le_bytes(read_bytes_unchecked::<4>(record, off)));
-                        validity.push(true);
-                    }
+            },
+            ColumnBuilder::Float {
+                values,
+                validity,
+                has_nulls,
+            } => unsafe {
+                if *record.get_unchecked(off + 4) == 1 {
+                    values.push(0.0);
+                    validity.push(false);
+                    *has_nulls = true;
+                } else {
+                    values.push(f32::from_le_bytes(read_bytes_unchecked::<4>(record, off)));
+                    validity.push(true);
                 }
-            }
-            ColumnBuilder::Double { values, validity, has_nulls } => {
-                unsafe {
-                    if *record.get_unchecked(off + 8) == 1 {
-                        values.push(0.0);
-                        validity.push(false);
-                        *has_nulls = true;
-                    } else {
-                        values.push(f64::from_le_bytes(read_bytes_unchecked::<8>(record, off)));
-                        validity.push(true);
-                    }
+            },
+            ColumnBuilder::Double {
+                values,
+                validity,
+                has_nulls,
+            } => unsafe {
+                if *record.get_unchecked(off + 8) == 1 {
+                    values.push(0.0);
+                    validity.push(false);
+                    *has_nulls = true;
+                } else {
+                    values.push(f64::from_le_bytes(read_bytes_unchecked::<8>(record, off)));
+                    validity.push(true);
                 }
-            }
-            ColumnBuilder::Decimal { values, validity, has_nulls, scale, .. } => {
-                unsafe {
+            },
+            ColumnBuilder::Decimal {
+                values,
+                validity,
+                has_nulls,
+                scale,
+                ..
+            } => unsafe {
+                if *record.get_unchecked(off + field.size) == 1 {
+                    values.push(0);
+                    validity.push(false);
+                    *has_nulls = true;
+                } else {
+                    let slice = &record[off..off + field.size];
+                    let len = slice.iter().position(|&b| b == 0).unwrap_or(field.size);
+                    let s = std::str::from_utf8(&slice[..len]).unwrap_or("0");
+                    values.push(parse_decimal_i128(s, *scale));
+                    validity.push(true);
+                }
+            },
+            ColumnBuilder::StrBuilder { builder, str_buf } => match field.field_type {
+                FieldType::String => unsafe {
                     if *record.get_unchecked(off + field.size) == 1 {
-                        values.push(0);
-                        validity.push(false);
-                        *has_nulls = true;
+                        builder.append_null();
                     } else {
                         let slice = &record[off..off + field.size];
                         let len = slice.iter().position(|&b| b == 0).unwrap_or(field.size);
-                        let s = std::str::from_utf8(&slice[..len]).unwrap_or("0");
-                        values.push(parse_decimal_i128(s, *scale));
-                        validity.push(true);
-                    }
-                }
-            }
-            ColumnBuilder::StrBuilder { builder, str_buf } => {
-                match field.field_type {
-                    FieldType::String => {
-                        unsafe {
-                            if *record.get_unchecked(off + field.size) == 1 {
-                                builder.append_null();
-                            } else {
-                                let slice = &record[off..off + field.size];
-                                let len = slice.iter().position(|&b| b == 0).unwrap_or(field.size);
-                                match std::str::from_utf8(&slice[..len]) {
-                                    Ok(s) => builder.append_value(s),
-                                    Err(_) => {
-                                        let cow = String::from_utf8_lossy(&slice[..len]);
-                                        builder.append_value(cow.as_ref());
-                                    }
-                                }
+                        match std::str::from_utf8(&slice[..len]) {
+                            Ok(s) => builder.append_value(s),
+                            Err(_) => {
+                                let cow = String::from_utf8_lossy(&slice[..len]);
+                                builder.append_value(cow.as_ref());
                             }
                         }
                     }
-                    FieldType::WString => {
-                        let null_byte_off = off + field.size * 2;
-                        unsafe {
-                            if *record.get_unchecked(null_byte_off) == 1 {
-                                builder.append_null();
-                            } else {
-                                let byte_len = field.size * 2;
-                                let slice = &record[off..off + byte_len];
-                                let char_count = slice
-                                    .chunks_exact(2)
-                                    .position(|c| c[0] == 0 && c[1] == 0)
-                                    .unwrap_or(field.size);
-                                transcode_utf16le(&slice[..char_count * 2], str_buf);
-                                builder.append_value(str_buf.as_str());
-                            }
-                        }
-                    }
-                    FieldType::VString => {
-                        match record::locate_var_data(record, off) {
-                            None => builder.append_null(),
-                            Some(bytes) if bytes.is_empty() => builder.append_value(""),
-                            Some(bytes) => {
-                                match std::str::from_utf8(bytes) {
-                                    Ok(s) => builder.append_value(s),
-                                    Err(_) => {
-                                        let cow = String::from_utf8_lossy(bytes);
-                                        builder.append_value(cow.as_ref());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    FieldType::VWString => {
-                        match record::locate_var_data(record, off) {
-                            None => builder.append_null(),
-                            Some(bytes) if bytes.is_empty() => builder.append_value(""),
-                            Some(bytes) => {
-                                transcode_utf16le(bytes, str_buf);
-                                builder.append_value(str_buf.as_str());
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            }
-            ColumnBuilder::DateDays { values, validity, has_nulls } => {
-                unsafe {
-                    if *record.get_unchecked(off + 10) == 1 {
-                        values.push(0);
-                        validity.push(false);
-                        *has_nulls = true;
-                    } else {
-                        match parse_date_to_days(&record[off..off + 10]) {
-                            Some(v) => {
-                                values.push(v);
-                                validity.push(true);
-                            }
-                            None => {
-                                values.push(0);
-                                validity.push(false);
-                                *has_nulls = true;
-                            }
+                },
+                FieldType::WString => {
+                    let null_byte_off = off + field.size * 2;
+                    unsafe {
+                        if *record.get_unchecked(null_byte_off) == 1 {
+                            builder.append_null();
+                        } else {
+                            let byte_len = field.size * 2;
+                            let slice = &record[off..off + byte_len];
+                            let char_count = slice
+                                .chunks_exact(2)
+                                .position(|c| c[0] == 0 && c[1] == 0)
+                                .unwrap_or(field.size);
+                            transcode_utf16le(&slice[..char_count * 2], str_buf);
+                            builder.append_value(str_buf.as_str());
                         }
                     }
                 }
-            }
-            ColumnBuilder::TimeNs { values, validity, has_nulls } => {
-                unsafe {
-                    if *record.get_unchecked(off + 8) == 1 {
-                        values.push(0);
-                        validity.push(false);
-                        *has_nulls = true;
-                    } else {
-                        match parse_time_to_ns(&record[off..off + 8]) {
-                            Some(v) => {
-                                values.push(v);
-                                validity.push(true);
-                            }
-                            None => {
-                                values.push(0);
-                                validity.push(false);
-                                *has_nulls = true;
-                            }
+                FieldType::VString => match record::locate_var_data(record, off) {
+                    None => builder.append_null(),
+                    Some([]) => builder.append_value(""),
+                    Some(bytes) => match std::str::from_utf8(bytes) {
+                        Ok(s) => builder.append_value(s),
+                        Err(_) => {
+                            let cow = String::from_utf8_lossy(bytes);
+                            builder.append_value(cow.as_ref());
+                        }
+                    },
+                },
+                FieldType::VWString => match record::locate_var_data(record, off) {
+                    None => builder.append_null(),
+                    Some([]) => builder.append_value(""),
+                    Some(bytes) => {
+                        transcode_utf16le(bytes, str_buf);
+                        builder.append_value(str_buf.as_str());
+                    }
+                },
+                _ => unreachable!(),
+            },
+            ColumnBuilder::DateDays {
+                values,
+                validity,
+                has_nulls,
+            } => unsafe {
+                if *record.get_unchecked(off + 10) == 1 {
+                    values.push(0);
+                    validity.push(false);
+                    *has_nulls = true;
+                } else {
+                    match parse_date_to_days(&record[off..off + 10]) {
+                        Some(v) => {
+                            values.push(v);
+                            validity.push(true);
+                        }
+                        None => {
+                            values.push(0);
+                            validity.push(false);
+                            *has_nulls = true;
                         }
                     }
                 }
-            }
-            ColumnBuilder::DateTimeUs { values, validity, has_nulls } => {
-                unsafe {
-                    if *record.get_unchecked(off + 19) == 1 {
-                        values.push(0);
-                        validity.push(false);
-                        *has_nulls = true;
-                    } else {
-                        match parse_datetime_to_us(&record[off..off + 19]) {
-                            Some(v) => {
-                                values.push(v);
-                                validity.push(true);
-                            }
-                            None => {
-                                values.push(0);
-                                validity.push(false);
-                                *has_nulls = true;
-                            }
+            },
+            ColumnBuilder::TimeNs {
+                values,
+                validity,
+                has_nulls,
+            } => unsafe {
+                if *record.get_unchecked(off + 8) == 1 {
+                    values.push(0);
+                    validity.push(false);
+                    *has_nulls = true;
+                } else {
+                    match parse_time_to_ns(&record[off..off + 8]) {
+                        Some(v) => {
+                            values.push(v);
+                            validity.push(true);
+                        }
+                        None => {
+                            values.push(0);
+                            validity.push(false);
+                            *has_nulls = true;
                         }
                     }
                 }
-            }
+            },
+            ColumnBuilder::DateTimeUs {
+                values,
+                validity,
+                has_nulls,
+            } => unsafe {
+                if *record.get_unchecked(off + 19) == 1 {
+                    values.push(0);
+                    validity.push(false);
+                    *has_nulls = true;
+                } else {
+                    match parse_datetime_to_us(&record[off..off + 19]) {
+                        Some(v) => {
+                            values.push(v);
+                            validity.push(true);
+                        }
+                        None => {
+                            values.push(0);
+                            validity.push(false);
+                            *has_nulls = true;
+                        }
+                    }
+                }
+            },
             ColumnBuilder::Blob(v) => {
                 v.push(record::parse_var_data(record, off));
             }
@@ -1166,70 +1436,115 @@ impl ColumnBuilder {
 
     fn into_series(self, name: &str) -> Result<Series> {
         let s = match self {
-            ColumnBuilder::Bool { values, validity, has_nulls } => {
+            ColumnBuilder::Bool {
+                values,
+                validity,
+                has_nulls,
+            } => {
                 if has_nulls {
                     // Build BooleanArray with validity directly
                     let bitmap: arrow::bitmap::Bitmap = validity.into();
                     let values_bitmap = arrow::bitmap::Bitmap::from_iter(values.iter().copied());
-                    let arr = arrow::array::BooleanArray::from_data_default(values_bitmap, Some(bitmap));
+                    let arr =
+                        arrow::array::BooleanArray::from_data_default(values_bitmap, Some(bitmap));
                     let ca = BooleanChunked::with_chunk(name.into(), arr);
                     ca.into_series()
                 } else {
                     BooleanChunked::new(name.into(), &values).into_series()
                 }
             }
-            ColumnBuilder::Byte { values, validity, has_nulls } => {
+            ColumnBuilder::Byte {
+                values,
+                validity,
+                has_nulls,
+            } => {
                 if has_nulls {
-                    Int16Chunked::from_vec_validity(name.into(), values, Some(validity.into())).into_series()
+                    Int16Chunked::from_vec_validity(name.into(), values, Some(validity.into()))
+                        .into_series()
                 } else {
                     Int16Chunked::from_vec(name.into(), values).into_series()
                 }
             }
-            ColumnBuilder::Int16 { values, validity, has_nulls } => {
+            ColumnBuilder::Int16 {
+                values,
+                validity,
+                has_nulls,
+            } => {
                 if has_nulls {
-                    Int16Chunked::from_vec_validity(name.into(), values, Some(validity.into())).into_series()
+                    Int16Chunked::from_vec_validity(name.into(), values, Some(validity.into()))
+                        .into_series()
                 } else {
                     Int16Chunked::from_vec(name.into(), values).into_series()
                 }
             }
-            ColumnBuilder::Int32 { values, validity, has_nulls } => {
+            ColumnBuilder::Int32 {
+                values,
+                validity,
+                has_nulls,
+            } => {
                 if has_nulls {
-                    Int32Chunked::from_vec_validity(name.into(), values, Some(validity.into())).into_series()
+                    Int32Chunked::from_vec_validity(name.into(), values, Some(validity.into()))
+                        .into_series()
                 } else {
                     Int32Chunked::from_vec(name.into(), values).into_series()
                 }
             }
-            ColumnBuilder::Int64 { values, validity, has_nulls } => {
+            ColumnBuilder::Int64 {
+                values,
+                validity,
+                has_nulls,
+            } => {
                 if has_nulls {
-                    Int64Chunked::from_vec_validity(name.into(), values, Some(validity.into())).into_series()
+                    Int64Chunked::from_vec_validity(name.into(), values, Some(validity.into()))
+                        .into_series()
                 } else {
                     Int64Chunked::from_vec(name.into(), values).into_series()
                 }
             }
-            ColumnBuilder::Float { values, validity, has_nulls } => {
+            ColumnBuilder::Float {
+                values,
+                validity,
+                has_nulls,
+            } => {
                 if has_nulls {
-                    Float32Chunked::from_vec_validity(name.into(), values, Some(validity.into())).into_series()
+                    Float32Chunked::from_vec_validity(name.into(), values, Some(validity.into()))
+                        .into_series()
                 } else {
                     Float32Chunked::from_vec(name.into(), values).into_series()
                 }
             }
-            ColumnBuilder::Double { values, validity, has_nulls } => {
+            ColumnBuilder::Double {
+                values,
+                validity,
+                has_nulls,
+            } => {
                 if has_nulls {
-                    Float64Chunked::from_vec_validity(name.into(), values, Some(validity.into())).into_series()
+                    Float64Chunked::from_vec_validity(name.into(), values, Some(validity.into()))
+                        .into_series()
                 } else {
                     Float64Chunked::from_vec(name.into(), values).into_series()
                 }
             }
-            ColumnBuilder::Decimal { values, validity, has_nulls, precision, scale } => {
+            ColumnBuilder::Decimal {
+                values,
+                validity,
+                has_nulls,
+                precision,
+                scale,
+            } => {
                 let ca = if has_nulls {
                     Int128Chunked::from_vec_validity(name.into(), values, Some(validity.into()))
                 } else {
                     Int128Chunked::from_vec(name.into(), values)
                 };
-                ca.into_decimal_unchecked(Some(precision), scale).into_series()
+                ca.into_decimal_unchecked(precision, scale).into_series()
             }
             ColumnBuilder::StrBuilder { builder, .. } => builder.finish().into_series(),
-            ColumnBuilder::DateDays { values, validity, has_nulls } => {
+            ColumnBuilder::DateDays {
+                values,
+                validity,
+                has_nulls,
+            } => {
                 let ca = if has_nulls {
                     Int32Chunked::from_vec_validity(name.into(), values, Some(validity.into()))
                 } else {
@@ -1237,7 +1552,11 @@ impl ColumnBuilder {
                 };
                 ca.into_date().into_series()
             }
-            ColumnBuilder::TimeNs { values, validity, has_nulls } => {
+            ColumnBuilder::TimeNs {
+                values,
+                validity,
+                has_nulls,
+            } => {
                 let ca = if has_nulls {
                     Int64Chunked::from_vec_validity(name.into(), values, Some(validity.into()))
                 } else {
@@ -1245,7 +1564,11 @@ impl ColumnBuilder {
                 };
                 ca.into_time().into_series()
             }
-            ColumnBuilder::DateTimeUs { values, validity, has_nulls } => {
+            ColumnBuilder::DateTimeUs {
+                values,
+                validity,
+                has_nulls,
+            } => {
                 let ca = if has_nulls {
                     Int64Chunked::from_vec_validity(name.into(), values, Some(validity.into()))
                 } else {
@@ -1255,10 +1578,7 @@ impl ColumnBuilder {
             }
             ColumnBuilder::Blob(v) => {
                 // Store as Binary
-                let values: Vec<Option<&[u8]>> = v
-                    .iter()
-                    .map(|opt| opt.as_deref())
-                    .collect();
+                let values: Vec<Option<&[u8]>> = v.iter().map(|opt| opt.as_deref()).collect();
                 Series::new(name.into(), values)
             }
         };
@@ -1314,6 +1634,7 @@ impl YxdbRowReader {
     }
 
     /// Advance to the next record. Returns `true` if a record is available.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Result<bool> {
         self.has_current = self.inner.next_record(&mut self.record_buf)?;
         Ok(self.has_current)
@@ -1331,9 +1652,10 @@ impl YxdbRowReader {
 
     /// Read a field value by column name.
     pub fn read_name(&self, name: &str) -> Result<FieldValue> {
-        let index = self.name_map.get(name).ok_or_else(|| {
-            YxdbError::ConversionError(format!("unknown field name: {}", name))
-        })?;
+        let index = self
+            .name_map
+            .get(name)
+            .ok_or_else(|| YxdbError::ConversionError(format!("unknown field name: {}", name)))?;
         self.read_index(*index)
     }
 
@@ -1365,6 +1687,12 @@ impl YxdbRowReader {
 mod tests {
     use super::*;
 
+    /// Test helper: create a DataFrame from columns, inferring height.
+    fn test_df(columns: Vec<Column>) -> DataFrame {
+        let h = columns.first().map_or(0, |c| c.len());
+        DataFrame::new(h, columns).unwrap()
+    }
+
     fn test_path(name: &str) -> String {
         format!("{}/test_files/{}", env!("CARGO_MANIFEST_DIR"), name)
     }
@@ -1373,14 +1701,14 @@ mod tests {
 
     #[test]
     fn all_types_shape() {
-        let df = crate::read_yxdb(&test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
         assert_eq!(df.height(), 2);
         assert_eq!(df.width(), 16);
     }
 
     #[test]
     fn all_types_integer_values() {
-        let df = crate::read_yxdb(&test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
         // Row 0 values (known from generation script)
         let byte_col = df.column("ByteCol").unwrap().i16().unwrap();
         assert_eq!(byte_col.get(0), Some(7));
@@ -1401,7 +1729,7 @@ mod tests {
 
     #[test]
     fn all_types_bool_values() {
-        let df = crate::read_yxdb(&test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
         let col = df.column("BoolCol").unwrap().bool().unwrap();
         assert_eq!(col.get(0), Some(true));
         assert_eq!(col.get(1), Some(false));
@@ -1409,7 +1737,7 @@ mod tests {
 
     #[test]
     fn all_types_float_values() {
-        let df = crate::read_yxdb(&test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
         let f32_col = df.column("FloatCol").unwrap().f32().unwrap();
         assert!((f32_col.get(0).unwrap() - 2.5).abs() < 0.01);
 
@@ -1421,12 +1749,12 @@ mod tests {
         assert!(matches!(dec_col.dtype(), DataType::Decimal(_, _)));
         let dec_ca = dec_col.decimal().unwrap();
         // 1234.5678 with scale=4 → unscaled i128 = 12345678
-        assert_eq!(dec_ca.get(0), Some(12345678i128));
+        assert_eq!(dec_ca.phys.get(0), Some(12345678i128));
     }
 
     #[test]
     fn all_types_string_values() {
-        let df = crate::read_yxdb(&test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
         let str_col = df.column("StringCol").unwrap().str().unwrap();
         assert_eq!(str_col.get(0), Some("Alteryx"));
 
@@ -1445,20 +1773,21 @@ mod tests {
 
     #[test]
     fn all_types_date_time_values() {
-        let df = crate::read_yxdb(&test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
 
         // DateCol → Polars Date (days since epoch)
         let date_col = df.column("DateCol").unwrap().date().unwrap();
         // 2025-03-15 → days since 1970-01-01
         let expected_date = chrono_date_to_days(2025, 3, 15);
-        assert_eq!(date_col.get(0), Some(expected_date));
+        assert_eq!(date_col.phys.get(0), Some(expected_date));
 
         // DateTimeCol → Polars Datetime (us since epoch)
         let dt_col = df.column("DateTimeCol").unwrap().datetime().unwrap();
         // 2025-03-15 08:30:00 → us since 1970-01-01
         let expected_dt = chrono_date_to_days(2025, 3, 15) as i64 * 86_400_000_000
-            + 8 * 3_600_000_000 + 30 * 60_000_000;
-        assert_eq!(dt_col.get(0), Some(expected_dt));
+            + 8 * 3_600_000_000
+            + 30 * 60_000_000;
+        assert_eq!(dt_col.phys.get(0), Some(expected_dt));
 
         // TimeCol → Polars Time (stored as i64 nanoseconds since midnight)
         let time_col = df.column("TimeCol").unwrap();
@@ -1478,7 +1807,7 @@ mod tests {
 
     #[test]
     fn all_types_blob_values() {
-        let df = crate::read_yxdb(&test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
         let col = df.column("BlobCol").unwrap().binary().unwrap();
 
         // Row 0: 1024 bytes (bytes(range(256)) * 4)
@@ -1499,7 +1828,7 @@ mod tests {
 
     #[test]
     fn null_values_populated_row() {
-        let df = crate::read_yxdb(&test_path("NullValues.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("NullValues.yxdb"), crate::SpatialMode::Raw).unwrap();
         assert_eq!(df.height(), 3);
 
         // Row 0 is fully populated
@@ -1512,46 +1841,106 @@ mod tests {
 
     #[test]
     fn null_values_all_null_row() {
-        let df = crate::read_yxdb(&test_path("NullValues.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("NullValues.yxdb"), crate::SpatialMode::Raw).unwrap();
 
         // Row 1: all null except Id
         let id_col = df.column("Id").unwrap().i32().unwrap();
         assert_eq!(id_col.get(1), Some(2));
 
         // Check nulls via the typed chunked arrays
-        assert!(df.column("NullByte").unwrap().i16().unwrap().get(1).is_none());
-        assert!(df.column("NullInt16").unwrap().i16().unwrap().get(1).is_none());
-        assert!(df.column("NullInt32").unwrap().i32().unwrap().get(1).is_none());
-        assert!(df.column("NullInt64").unwrap().i64().unwrap().get(1).is_none());
-        assert!(df.column("NullFloat").unwrap().f32().unwrap().get(1).is_none());
-        assert!(df.column("NullDouble").unwrap().f64().unwrap().get(1).is_none());
-        assert!(df.column("NullStr").unwrap().str().unwrap().get(1).is_none());
-        assert!(df.column("NullBlob").unwrap().binary().unwrap().get(1).is_none());
+        assert!(df
+            .column("NullByte")
+            .unwrap()
+            .i16()
+            .unwrap()
+            .get(1)
+            .is_none());
+        assert!(df
+            .column("NullInt16")
+            .unwrap()
+            .i16()
+            .unwrap()
+            .get(1)
+            .is_none());
+        assert!(df
+            .column("NullInt32")
+            .unwrap()
+            .i32()
+            .unwrap()
+            .get(1)
+            .is_none());
+        assert!(df
+            .column("NullInt64")
+            .unwrap()
+            .i64()
+            .unwrap()
+            .get(1)
+            .is_none());
+        assert!(df
+            .column("NullFloat")
+            .unwrap()
+            .f32()
+            .unwrap()
+            .get(1)
+            .is_none());
+        assert!(df
+            .column("NullDouble")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(1)
+            .is_none());
+        assert!(df
+            .column("NullStr")
+            .unwrap()
+            .str()
+            .unwrap()
+            .get(1)
+            .is_none());
+        assert!(df
+            .column("NullBlob")
+            .unwrap()
+            .binary()
+            .unwrap()
+            .get(1)
+            .is_none());
     }
 
     #[test]
     fn null_values_mixed_row() {
-        let df = crate::read_yxdb(&test_path("NullValues.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("NullValues.yxdb"), crate::SpatialMode::Raw).unwrap();
 
         // Row 2: mixed — NullByte is null, NullInt16 is 50
-        assert!(df.column("NullByte").unwrap().i16().unwrap().get(2).is_none());
+        assert!(df
+            .column("NullByte")
+            .unwrap()
+            .i16()
+            .unwrap()
+            .get(2)
+            .is_none());
         let i16_col = df.column("NullInt16").unwrap().i16().unwrap();
         assert_eq!(i16_col.get(2), Some(50));
-        assert!(df.column("NullInt32").unwrap().i32().unwrap().get(2).is_none());
+        assert!(df
+            .column("NullInt32")
+            .unwrap()
+            .i32()
+            .unwrap()
+            .get(2)
+            .is_none());
     }
 
     // ── ManyRecords.yxdb: 50,000 rows for LZF block stress test ──
 
     #[test]
     fn many_records_shape() {
-        let df = crate::read_yxdb(&test_path("ManyRecords.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("ManyRecords.yxdb"), crate::SpatialMode::Raw).unwrap();
         assert_eq!(df.height(), 50_000);
         assert_eq!(df.width(), 3);
     }
 
     #[test]
     fn many_records_id_sum() {
-        let df = crate::read_yxdb(&test_path("ManyRecords.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("ManyRecords.yxdb"), crate::SpatialMode::Raw).unwrap();
         let id_col = df.column("Id").unwrap().i32().unwrap();
         let id_sum: i64 = id_col.into_iter().map(|v| v.unwrap_or(0) as i64).sum();
         // sum(1..=50000) = 50000 * 50001 / 2 = 1_250_025_000
@@ -1560,7 +1949,7 @@ mod tests {
 
     #[test]
     fn many_records_label_check() {
-        let df = crate::read_yxdb(&test_path("ManyRecords.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("ManyRecords.yxdb"), crate::SpatialMode::Raw).unwrap();
         let label_col = df.column("Label").unwrap().str().unwrap();
         assert_eq!(label_col.get(0), Some("row_00001"));
         assert_eq!(label_col.get(49_999), Some("row_50000"));
@@ -1570,7 +1959,7 @@ mod tests {
 
     #[test]
     fn large_blob_sizes() {
-        let df = crate::read_yxdb(&test_path("LargeBlob.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("LargeBlob.yxdb"), crate::SpatialMode::Raw).unwrap();
         assert_eq!(df.height(), 4);
         let col = df.column("Data").unwrap().binary().unwrap();
 
@@ -1588,16 +1977,19 @@ mod tests {
 
     #[test]
     fn people_shape_and_columns() {
-        let df = crate::read_yxdb(&test_path("People.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("People.yxdb"), crate::SpatialMode::Raw).unwrap();
         assert_eq!(df.height(), 200);
         assert_eq!(df.width(), 8);
-        assert!(df.get_column_names().iter().any(|n| n.as_str() == "FirstName"));
+        assert!(df
+            .get_column_names()
+            .iter()
+            .any(|n| n.as_str() == "FirstName"));
         assert!(df.get_column_names().iter().any(|n| n.as_str() == "Salary"));
     }
 
     #[test]
     fn people_no_null_ids() {
-        let df = crate::read_yxdb(&test_path("People.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("People.yxdb"), crate::SpatialMode::Raw).unwrap();
         assert_eq!(df.column("PersonId").unwrap().null_count(), 0);
     }
 
@@ -1605,7 +1997,7 @@ mod tests {
 
     #[test]
     fn strings_edge_cases() {
-        let df = crate::read_yxdb(&test_path("Strings.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("Strings.yxdb"), crate::SpatialMode::Raw).unwrap();
         assert_eq!(df.height(), 6);
 
         let vstr = df.column("VarStr").unwrap().str().unwrap();
@@ -1623,7 +2015,7 @@ mod tests {
 
     #[test]
     fn strings_unicode() {
-        let df = crate::read_yxdb(&test_path("Strings.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("Strings.yxdb"), crate::SpatialMode::Raw).unwrap();
         let vwstr = df.column("VarWStr").unwrap().str().unwrap();
         // Row 0: "wïdé" (unicode in wide string)
         assert_eq!(vwstr.get(0), Some("wïdé"));
@@ -1635,7 +2027,7 @@ mod tests {
 
     #[test]
     fn single_column_values() {
-        let df = crate::read_yxdb(&test_path("SingleColumn.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(test_path("SingleColumn.yxdb"), crate::SpatialMode::Raw).unwrap();
         assert_eq!(df.height(), 5);
         let col = df.column("Value").unwrap().i32().unwrap();
         assert_eq!(col.get(0), Some(10));
@@ -1646,8 +2038,10 @@ mod tests {
 
     #[test]
     fn projection_subset() {
-        let reader = YxdbReader::open(&test_path("AllTypes.yxdb")).unwrap();
-        let df = reader.into_dataframe_projected(Some(&["BoolCol", "Int32Col"])).unwrap();
+        let reader = YxdbReader::open(test_path("AllTypes.yxdb")).unwrap();
+        let df = reader
+            .into_dataframe_projected(Some(&["BoolCol", "Int32Col"]))
+            .unwrap();
         assert_eq!(df.width(), 2);
         assert_eq!(df.height(), 2);
         assert!(df.column("BoolCol").is_ok());
@@ -1657,22 +2051,26 @@ mod tests {
 
     #[test]
     fn projection_none_returns_all() {
-        let reader = YxdbReader::open(&test_path("AllTypes.yxdb")).unwrap();
+        let reader = YxdbReader::open(test_path("AllTypes.yxdb")).unwrap();
         let df = reader.into_dataframe_projected(None).unwrap();
         assert_eq!(df.width(), 16);
     }
 
     #[test]
-    fn projection_ignores_unknown_columns() {
-        let reader = YxdbReader::open(&test_path("AllTypes.yxdb")).unwrap();
-        let df = reader.into_dataframe_projected(Some(&["Int32Col", "NoSuchColumn"])).unwrap();
-        assert_eq!(df.width(), 1);
-        assert!(df.column("Int32Col").is_ok());
+    fn projection_rejects_unknown_columns() {
+        let reader = YxdbReader::open(test_path("AllTypes.yxdb")).unwrap();
+        let result = reader.into_dataframe_projected(Some(&["Int32Col", "NoSuchColumn"]));
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("NoSuchColumn"),
+            "Error should mention the unknown column name"
+        );
     }
 
     #[test]
     fn projection_variable_records() {
-        let reader = YxdbReader::open(&test_path("Strings.yxdb")).unwrap();
+        let reader = YxdbReader::open(test_path("Strings.yxdb")).unwrap();
         let df = reader.into_dataframe_projected(Some(&["VarStr"])).unwrap();
         assert_eq!(df.width(), 1);
         assert_eq!(df.height(), 6);
@@ -1682,7 +2080,12 @@ mod tests {
 
     #[test]
     fn read_yxdb_columns_convenience() {
-        let df = crate::read_yxdb_columns(&test_path("People.yxdb"), &["PersonId", "FirstName"], crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb_columns(
+            test_path("People.yxdb"),
+            &["PersonId", "FirstName"],
+            crate::SpatialMode::Raw,
+        )
+        .unwrap();
         assert_eq!(df.width(), 2);
         assert_eq!(df.height(), 200);
     }
@@ -1691,19 +2094,19 @@ mod tests {
 
     #[test]
     fn reject_invalid_text_file() {
-        let result = YxdbReader::open(&test_path("not_a_yxdb.txt"));
+        let result = YxdbReader::open(test_path("not_a_yxdb.txt"));
         assert!(result.is_err());
     }
 
     #[test]
     fn reject_too_small_file() {
-        let result = YxdbReader::open(&test_path("too_small.bin"));
+        let result = YxdbReader::open(test_path("too_small.bin"));
         assert!(result.is_err());
     }
 
     #[test]
     fn reject_nonexistent_file() {
-        let result = YxdbReader::open(&test_path("does_not_exist.yxdb"));
+        let result = YxdbReader::open(test_path("does_not_exist.yxdb"));
         assert!(result.is_err());
     }
 
@@ -1711,7 +2114,7 @@ mod tests {
 
     #[test]
     fn row_reader_all_types() {
-        let mut reader = YxdbRowReader::open(&test_path("AllTypes.yxdb")).unwrap();
+        let mut reader = YxdbRowReader::open(test_path("AllTypes.yxdb")).unwrap();
         assert_eq!(reader.num_records(), 2);
         assert_eq!(reader.fields().len(), 16);
 
@@ -1721,11 +2124,26 @@ mod tests {
         assert_eq!(vals.len(), 16);
 
         // Check values by name
-        assert_eq!(reader.read_name("BoolCol").unwrap(), FieldValue::Bool(Some(true)));
-        assert_eq!(reader.read_name("ByteCol").unwrap(), FieldValue::Byte(Some(7)));
-        assert_eq!(reader.read_name("Int16Col").unwrap(), FieldValue::Int16(Some(-1234)));
-        assert_eq!(reader.read_name("Int32Col").unwrap(), FieldValue::Int32(Some(42000)));
-        assert_eq!(reader.read_name("Int64Col").unwrap(), FieldValue::Int64(Some(9_000_000_000)));
+        assert_eq!(
+            reader.read_name("BoolCol").unwrap(),
+            FieldValue::Bool(Some(true))
+        );
+        assert_eq!(
+            reader.read_name("ByteCol").unwrap(),
+            FieldValue::Byte(Some(7))
+        );
+        assert_eq!(
+            reader.read_name("Int16Col").unwrap(),
+            FieldValue::Int16(Some(-1234))
+        );
+        assert_eq!(
+            reader.read_name("Int32Col").unwrap(),
+            FieldValue::Int32(Some(42000))
+        );
+        assert_eq!(
+            reader.read_name("Int64Col").unwrap(),
+            FieldValue::Int64(Some(9_000_000_000))
+        );
 
         // read_index should also work for the first field
         let first_by_name = reader.read_name(reader.fields()[0].name.as_str()).unwrap();
@@ -1734,8 +2152,14 @@ mod tests {
 
         // Read row 1
         assert!(reader.next().unwrap());
-        assert_eq!(reader.read_name("BoolCol").unwrap(), FieldValue::Bool(Some(false)));
-        assert_eq!(reader.read_name("ByteCol").unwrap(), FieldValue::Byte(Some(255)));
+        assert_eq!(
+            reader.read_name("BoolCol").unwrap(),
+            FieldValue::Bool(Some(false))
+        );
+        assert_eq!(
+            reader.read_name("ByteCol").unwrap(),
+            FieldValue::Byte(Some(255))
+        );
 
         // No more rows
         assert!(!reader.next().unwrap());
@@ -1743,7 +2167,7 @@ mod tests {
 
     #[test]
     fn row_reader_name_lookup() {
-        let mut reader = YxdbRowReader::open(&test_path("AllTypes.yxdb")).unwrap();
+        let mut reader = YxdbRowReader::open(test_path("AllTypes.yxdb")).unwrap();
         assert!(reader.next().unwrap());
 
         // read_name should return same values as read_index
@@ -1758,7 +2182,7 @@ mod tests {
 
     #[test]
     fn row_reader_null_handling() {
-        let mut reader = YxdbRowReader::open(&test_path("NullValues.yxdb")).unwrap();
+        let mut reader = YxdbRowReader::open(test_path("NullValues.yxdb")).unwrap();
         assert_eq!(reader.num_records(), 3);
 
         // Row 0: fully populated
@@ -1776,7 +2200,7 @@ mod tests {
 
     #[test]
     fn row_reader_many_records() {
-        let mut reader = YxdbRowReader::open(&test_path("ManyRecords.yxdb")).unwrap();
+        let mut reader = YxdbRowReader::open(test_path("ManyRecords.yxdb")).unwrap();
         assert_eq!(reader.num_records(), 50_000);
 
         let mut count = 0u64;
@@ -1789,7 +2213,7 @@ mod tests {
 
     #[test]
     fn row_reader_error_before_next() {
-        let reader = YxdbRowReader::open(&test_path("AllTypes.yxdb")).unwrap();
+        let reader = YxdbRowReader::open(test_path("AllTypes.yxdb")).unwrap();
         // Attempting to read without calling next() should error
         assert!(reader.read_index(0).is_err());
         assert!(reader.read_all().is_err());
@@ -1815,7 +2239,10 @@ mod tests {
         // These have high byte 0x01 and low byte < 0x80, which previously
         // fooled the SIMD path into treating them as ASCII.
         let text = "ĀĂĄĆĈĊČ";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -1825,7 +2252,10 @@ mod tests {
     fn transcode_eight_consecutive_u0100() {
         // Exactly 8 code units of U+0100 — triggers SIMD batch on x86_64
         let text = "ĀĀĀĀĀĀĀĀ";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         assert_eq!(input.len(), 16); // 8 code units × 2 bytes
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
@@ -1836,7 +2266,10 @@ mod tests {
     fn transcode_mixed_ascii_and_u0100_range() {
         // Mix of ASCII and Latin Extended that spans SIMD boundaries
         let text = "AĀBĂCĄDĆEĈFĊGČHā";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -1846,7 +2279,10 @@ mod tests {
     fn transcode_cyrillic() {
         // Cyrillic (U+0400-U+04FF): high byte in [0x04], low byte varies
         let text = "Привет мир";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -1856,7 +2292,10 @@ mod tests {
     fn transcode_greek() {
         // Greek (U+0370-U+03FF): both bytes < 0x80 for some chars
         let text = "αβγδεζηθ";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -1866,7 +2305,10 @@ mod tests {
     fn transcode_cjk() {
         // CJK Unified Ideographs (U+4E00-U+9FFF): high byte >= 0x80
         let text = "日本語テスト";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -1876,7 +2318,10 @@ mod tests {
     fn transcode_surrogate_pairs() {
         // U+1F600 (😀) requires a surrogate pair in UTF-16
         let text = "A😀B";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -1901,7 +2346,10 @@ mod tests {
     fn transcode_long_ascii_then_nonascii() {
         // 16 ASCII chars (2 full SIMD batches) then non-ASCII
         let text = "0123456789ABCDEFÜnïcödé";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -1911,11 +2359,17 @@ mod tests {
     fn transcode_reuse_buffer() {
         let mut out = String::new();
         // First call
-        let input1: Vec<u8> = "Hello".encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input1: Vec<u8> = "Hello"
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         transcode_utf16le(&input1, &mut out);
         assert_eq!(out, "Hello");
         // Second call should clear and overwrite
-        let input2: Vec<u8> = "World".encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input2: Vec<u8> = "World"
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         transcode_utf16le(&input2, &mut out);
         assert_eq!(out, "World");
     }
@@ -1926,7 +2380,10 @@ mod tests {
     fn transcode_exactly_8_ascii() {
         // 8 code units = exactly one SIMD batch on SSE2
         let text = "ABCDEFGH";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         assert_eq!(input.len(), 16);
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
@@ -1937,7 +2394,10 @@ mod tests {
     fn transcode_exactly_16_ascii() {
         // 16 code units = two full SIMD batches
         let text = "0123456789ABCDEF";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         assert_eq!(input.len(), 32);
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
@@ -1948,7 +2408,10 @@ mod tests {
     fn transcode_7_ascii_then_nonascii() {
         // 7 ASCII (< SIMD batch of 8) + non-ASCII
         let text = "1234567Ü";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -1958,7 +2421,10 @@ mod tests {
     fn transcode_9_ascii_then_nonascii() {
         // 9 ASCII (1 SIMD batch + 1 scalar) + non-ASCII
         let text = "123456789é";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -1968,7 +2434,10 @@ mod tests {
     fn transcode_bmp_boundary() {
         // U+FFFD (replacement character) — highest non-surrogate BMP codepoint
         let text = "\u{FFFD}A\u{FFFD}";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -1978,7 +2447,10 @@ mod tests {
     fn transcode_multi_surrogate_pairs() {
         // Multiple supplementary plane characters in a row
         let text = "𝄞𝄞𝄞𝄞"; // U+1D11E (Musical Symbol G Clef), 4 times
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -1999,9 +2471,12 @@ mod tests {
 
     #[test]
     fn transcode_latin_ext_b() {
-        // U+0180-U+024F — Latin Extended-B  
+        // U+0180-U+024F — Latin Extended-B
         let text = "ƀƁƂƃƄƅƆƇ";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -2010,7 +2485,10 @@ mod tests {
     #[test]
     fn transcode_arabic() {
         let text = "مرحبا بالعالم";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -2019,7 +2497,10 @@ mod tests {
     #[test]
     fn transcode_thai() {
         let text = "สวัสดีครับ";
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -2028,8 +2509,13 @@ mod tests {
     #[test]
     fn transcode_very_long_ascii() {
         // 1000 ASCII chars — many SIMD batches
-        let text: String = (0..1000).map(|i| char::from(b'A' + (i % 26) as u8)).collect();
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let text: String = (0..1000)
+            .map(|i| char::from(b'A' + (i % 26) as u8))
+            .collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -2039,7 +2525,10 @@ mod tests {
     fn transcode_very_long_nonascii() {
         // 500 CJK characters — all go through non-ASCII path
         let text: String = (0..500).map(|_| '日').collect();
-        let input: Vec<u8> = text.encode_utf16().flat_map(|cu| cu.to_le_bytes()).collect();
+        let input: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|cu| cu.to_le_bytes())
+            .collect();
         let mut out = String::new();
         transcode_utf16le(&input, &mut out);
         assert_eq!(out, text);
@@ -2049,7 +2538,7 @@ mod tests {
 
     #[test]
     fn projection_empty_list_returns_no_columns() {
-        let reader = YxdbReader::open(&test_path("AllTypes.yxdb")).unwrap();
+        let reader = YxdbReader::open(test_path("AllTypes.yxdb")).unwrap();
         let df = reader.into_dataframe_projected(Some(&[])).unwrap();
         assert_eq!(df.width(), 0);
     }
@@ -2059,7 +2548,7 @@ mod tests {
         // Polars rejects DataFrames with duplicate column names.
         // When a projection lists the same column twice, the reader should
         // either deduplicate or propagate the error from Polars.
-        let reader = YxdbReader::open(&test_path("AllTypes.yxdb")).unwrap();
+        let reader = YxdbReader::open(test_path("AllTypes.yxdb")).unwrap();
         let result = reader.into_dataframe_projected(Some(&["Int32Col", "Int32Col"]));
         // Accept either: Ok with 1 column (dedup) or Err (Polars duplicate rejection)
         match result {
@@ -2078,7 +2567,7 @@ mod tests {
 
     #[test]
     fn row_reader_read_index_all_fields() {
-        let mut reader = YxdbRowReader::open(&test_path("AllTypes.yxdb")).unwrap();
+        let mut reader = YxdbRowReader::open(test_path("AllTypes.yxdb")).unwrap();
         assert!(reader.next().unwrap());
         // Read every field by index — should not panic
         for i in 0..reader.fields().len() {
@@ -2088,7 +2577,7 @@ mod tests {
 
     #[test]
     fn row_reader_out_of_bounds_index() {
-        let mut reader = YxdbRowReader::open(&test_path("AllTypes.yxdb")).unwrap();
+        let mut reader = YxdbRowReader::open(test_path("AllTypes.yxdb")).unwrap();
         assert!(reader.next().unwrap());
         let result = reader.read_index(9999);
         assert!(result.is_err());
@@ -2096,7 +2585,7 @@ mod tests {
 
     #[test]
     fn row_reader_single_column_file() {
-        let mut reader = YxdbRowReader::open(&test_path("SingleColumn.yxdb")).unwrap();
+        let mut reader = YxdbRowReader::open(test_path("SingleColumn.yxdb")).unwrap();
         assert_eq!(reader.num_records(), 5);
         let mut sum = 0i64;
         while reader.next().unwrap() {
@@ -2109,12 +2598,124 @@ mod tests {
 
     #[test]
     fn row_reader_large_blob() {
-        let mut reader = YxdbRowReader::open(&test_path("LargeBlob.yxdb")).unwrap();
+        let mut reader = YxdbRowReader::open(test_path("LargeBlob.yxdb")).unwrap();
         assert!(reader.next().unwrap());
         let val = reader.read_name("Data").unwrap();
         match val {
             FieldValue::Blob(Some(data)) => assert_eq!(data.len(), 512_000),
             other => panic!("expected large blob, got {other:?}"),
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Regression tests — audit findings (v0.1.1)
+    // ══════════════════════════════════════════════════════════════════
+
+    /// Audit #6 — File smaller than 512 bytes produces a clear error message.
+    #[test]
+    fn regression_small_file_error() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(b"too short").unwrap();
+        tmp.flush().unwrap();
+
+        let err = crate::read_yxdb(tmp.path(), crate::SpatialMode::Raw).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("too small") || msg.contains("512"),
+            "expected descriptive error for tiny file, got: {msg}"
+        );
+    }
+
+    /// Audit #11 — Projecting an unknown column name returns an error.
+    #[test]
+    fn regression_unknown_column_rejected() {
+        let reader = YxdbReader::open(test_path("AllTypes.yxdb")).unwrap();
+        let result = reader.into_dataframe_projected(Some(&["Int32Col", "DoesNotExist"]));
+        assert!(result.is_err(), "expected error for unknown column");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("DoesNotExist"),
+            "error should mention the missing column name, got: {msg}"
+        );
+    }
+
+    /// Audit #11 (companion) — All-unknown columns also error.
+    #[test]
+    fn regression_all_unknown_columns_rejected() {
+        let reader = YxdbReader::open(test_path("AllTypes.yxdb")).unwrap();
+        let result = reader.into_dataframe_projected(Some(&["Fake1", "Fake2"]));
+        assert!(result.is_err());
+    }
+
+    /// Audit #7 — Empty DataFrame (0 rows) reads back with correct schema.
+    #[test]
+    fn regression_empty_dataframe_schema_preserved() {
+        use polars::prelude::*;
+        use tempfile::NamedTempFile;
+
+        let empty_i32: Vec<i32> = vec![];
+        let empty_str: Vec<&str> = vec![];
+        let df = df! {
+            "id" => empty_i32,
+            "name" => empty_str
+        }
+        .unwrap();
+
+        let tmp = NamedTempFile::new().unwrap();
+        crate::write_yxdb(tmp.path(), &df, &[]).unwrap();
+
+        // Full read
+        let df2 = crate::read_yxdb(tmp.path(), crate::SpatialMode::Raw).unwrap();
+        assert_eq!(df2.height(), 0);
+        assert_eq!(df2.width(), 2);
+
+        // Projected read
+        let reader = YxdbReader::open(tmp.path()).unwrap();
+        let df3 = reader.into_dataframe_projected(Some(&["name"])).unwrap();
+        assert_eq!(df3.height(), 0);
+        assert_eq!(df3.width(), 1);
+        assert_eq!(df3.get_column_names()[0].as_str(), "name");
+    }
+
+    /// Audit #5 — Large binary blob (> BLOCK_SIZE) roundtrips through reader.
+    /// Ensures the dynamic LZF buffer sizing doesn't choke on oversized
+    /// uncompressed blocks.
+    #[test]
+    fn regression_large_blob_decompression() {
+        use polars::prelude::*;
+        use tempfile::NamedTempFile;
+
+        let big_blob: Vec<u8> = vec![0xAB; 300_000];
+        let df = test_df(vec![Column::new(
+            "payload".into(),
+            vec![big_blob.as_slice()],
+        )]);
+
+        let tmp = NamedTempFile::new().unwrap();
+        crate::write_yxdb(tmp.path(), &df, &[]).unwrap();
+
+        let df2 = crate::read_yxdb(tmp.path(), crate::SpatialMode::Raw).unwrap();
+        let col = df2.column("payload").unwrap().binary().unwrap();
+        assert_eq!(col.get(0).unwrap().len(), 300_000);
+        assert!(col.get(0).unwrap().iter().all(|&b| b == 0xAB));
+    }
+
+    /// Audit #11 — Projected read via read_yxdb_columns also rejects unknowns.
+    #[test]
+    fn regression_read_yxdb_columns_rejects_unknown() {
+        let result = crate::read_yxdb_columns(
+            test_path("AllTypes.yxdb"),
+            &["Int32Col", "Nonexistent"],
+            crate::SpatialMode::Raw,
+        );
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("Nonexistent"),
+            "error should mention the unknown column, got: {msg}"
+        );
     }
 }

@@ -2,23 +2,25 @@
 name = "sigilyx"
 version = "0.0.0"
 edition = "2021"
+rust-version = "1.75"
 description = "High-performance, standalone reader/writer for Alteryx .yxdb files."
 license = "AGPL-3.0-only"
-authors = ["Sigilweaver Holdings LLC"]
+authors = ["Sigilweaver"]
 repository = "https://github.com/sigilweaver/sigilyx"
 homepage = "https://sigilweaver.app/sigilyx/"
 documentation = "https://docs.rs/sigilyx"
 readme = "README.md"
 keywords = ["yxdb", "alteryx", "polars", "dataframe", "etl"]
 categories = ["parser-implementations", "encoding", "science"]
+exclude = ["test_files/"]
 
 [dependencies]
-polars = { version = "0.46", features = ["lazy", "dtype-date", "dtype-datetime", "dtype-time", "dtype-decimal", "ipc"] }
-quick-xml = "0.37"
+polars = { version = "0.53", features = ["lazy", "dtype-date", "dtype-datetime", "dtype-time", "dtype-decimal", "dtype-duration", "ipc", "parquet"] }
+quick-xml = "0.39"
 thiserror = "2"
 rayon = "1.10"
 memmap2 = "0.9"
-arrow = { version = "0.46", package = "polars-arrow", default-features = false }
+arrow = { version = "0.53", package = "polars-arrow", default-features = false }
 
 [build-dependencies]
 cc = "1"
