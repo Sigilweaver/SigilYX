@@ -6,9 +6,9 @@ build-backend = "maturin"
 name = "sigilyx"
 version = "0.0.0"
 description = "SigilYX — High-performance YXDB file reader and writer."
-readme = "README.md"
+readme = "python/README.md"
 license = {text = "AGPL-3.0-only"}
-authors = [{name = "Sigilweaver Holdings LLC"}]
+authors = [{name = "Sigilweaver"}]
 requires-python = ">=3.9"
 dependencies = ["polars>=0.20"]
 keywords = ["yxdb", "alteryx", "polars", "dataframe", "etl", "arrow"]
@@ -24,6 +24,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Rust",
     "Topic :: Scientific/Engineering",
     "Topic :: Software Development :: Libraries",
@@ -46,11 +47,13 @@ all = ["pyarrow>=14.0", "pandas>=1.5"]
 manifest-path = "sigilyx-python/Cargo.toml"
 python-source = "python"
 module-name = "sigilyx.sigilyx"
+include = ["LICENSE", "python/README.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
-    "pyarrow>=21.0.0",
+    "pyarrow>=14.0",
+    "psutil>=5.9",
 ]
