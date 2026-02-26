@@ -95,12 +95,12 @@ impl FieldType {
     pub fn fixed_bytes(&self, size: usize) -> usize {
         match self {
             FieldType::Bool => 1,
-            FieldType::Byte => 1 + 1,           // value + null byte
-            FieldType::Int16 => 2 + 1,           // value + null byte
-            FieldType::Int32 => 4 + 1,           // value + null byte
-            FieldType::Int64 => 8 + 1,           // value + null byte
-            FieldType::Float => 4 + 1,           // value + null byte
-            FieldType::Double => 8 + 1,          // value + null byte
+            FieldType::Byte => 1 + 1,             // value + null byte
+            FieldType::Int16 => 2 + 1,            // value + null byte
+            FieldType::Int32 => 4 + 1,            // value + null byte
+            FieldType::Int64 => 8 + 1,            // value + null byte
+            FieldType::Float => 4 + 1,            // value + null byte
+            FieldType::Double => 8 + 1,           // value + null byte
             FieldType::FixedDecimal => size + 1,  // ASCII digits + null byte
             FieldType::String => size + 1,        // ASCII chars + null byte
             FieldType::WString => (size * 2) + 1, // UTF-16 chars + null byte
