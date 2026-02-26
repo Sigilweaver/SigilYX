@@ -50,21 +50,21 @@ struct BenchResult {
     cv: f64,
 }
 
-fn compute_stats(times: &mut Vec<f64>) -> (f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) {
+fn compute_stats(times: &mut [f64]) -> (f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) {
     let n = times.len();
     times.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
     let sum: f64 = times.iter().sum();
     let mean = sum / n as f64;
 
-    let median = if n % 2 == 0 {
+    let median = if n.is_multiple_of(2) {
         (times[n / 2 - 1] + times[n / 2]) / 2.0
     } else {
         times[n / 2]
     };
 
-    let variance: f64 = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>()
-        / (n as f64 - 1.0).max(1.0);
+    let variance: f64 =
+        times.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / (n as f64 - 1.0).max(1.0);
     let stdev = variance.sqrt();
 
     let percentile = |p: f64| -> f64 {
@@ -78,7 +78,19 @@ fn compute_stats(times: &mut Vec<f64>) -> (f64, f64, f64, f64, f64, f64, f64, f6
     let p95 = percentile(0.95);
     let cv = if mean > 0.0 { stdev / mean } else { 0.0 };
 
-    (mean, median, stdev, times[0], times[n - 1], p5, p25, p75, p95, p75 - p25, cv)
+    (
+        mean,
+        median,
+        stdev,
+        times[0],
+        times[n - 1],
+        p5,
+        p25,
+        p75,
+        p95,
+        p75 - p25,
+        cv,
+    )
 }
 
 /// Run the columnar (DataFrame) benchmark.
@@ -90,7 +102,8 @@ fn bench_columnar(file_path: &str, runs: usize) -> (usize, usize, Vec<f64>) {
     eprintln!("Mode: columnar (DataFrame)");
     eprintln!("Warming up ({} runs)...", WARMUP_RUNS);
     for _ in 0..WARMUP_RUNS {
-        let df = sigilyx::read_yxdb(file_path, sigilyx::SpatialMode::Raw).expect("Failed to read YXDB");
+        let df =
+            sigilyx::read_yxdb(file_path, sigilyx::SpatialMode::Raw).expect("Failed to read YXDB");
         total_rows = df.height();
         total_cols = df.width();
         drop(df);
@@ -100,7 +113,8 @@ fn bench_columnar(file_path: &str, runs: usize) -> (usize, usize, Vec<f64>) {
     let mut times: Vec<f64> = Vec::with_capacity(runs);
     for _ in 0..runs {
         let start = Instant::now();
-        let df = sigilyx::read_yxdb(file_path, sigilyx::SpatialMode::Raw).expect("Failed to read YXDB");
+        let df =
+            sigilyx::read_yxdb(file_path, sigilyx::SpatialMode::Raw).expect("Failed to read YXDB");
         let elapsed = start.elapsed().as_secs_f64();
         drop(df);
         times.push(elapsed);
@@ -188,10 +202,7 @@ fn main() {
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let file_name = path.file_name().unwrap().to_string_lossy().to_string();
 
-    eprintln!(
-        "File: {}",
-        file_path
-    );
+    eprintln!("File: {}", file_path);
 
     let (total_rows, total_cols, mut times) = match mode.as_str() {
         "columnar" => bench_columnar(&file_path, runs),
@@ -204,8 +215,7 @@ fn main() {
 
     eprintln!("{} rows x {} cols", total_rows, total_cols);
 
-    let (mean, median, stdev, min, max, p5, p25, p75, p95, iqr, cv) =
-        compute_stats(&mut times);
+    let (mean, median, stdev, min, max, p5, p25, p75, p95, iqr, cv) = compute_stats(&mut times);
 
     let throughput = if median > 0.0 {
         total_rows as f64 / median
