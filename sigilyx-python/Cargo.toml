@@ -4,7 +4,7 @@ version = "0.0.0"
 edition = "2021"
 description = "Python bindings for SigilYX — high-performance YXDB reader and writer"
 license = "AGPL-3.0-only"
-authors = ["Sigilweaver Holdings LLC"]
+authors = ["Sigilweaver"]
 repository = "https://github.com/sigilweaver/sigilyx"
 publish = false
 
@@ -14,5 +14,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 sigilyx-core = { path = "../sigilyx", package = "sigilyx" }
-pyo3 = { version = "0.23", features = ["extension-module"] }
-pyo3-polars = "0.20"
+pyo3 = { version = "0.27", features = ["extension-module"] }
+pyo3-polars = "0.26"

@@ -524,7 +524,11 @@ fn wkb_multipoint_to_shp(wkb: &[u8], is_le: bool, has_z: bool, has_m: bool) -> R
         ensure_len(wkb, offset + 5 + dim * 8, "WKB MultiPoint sub-point coords")?;
         let x = read_f64(wkb, offset + 5, sub_le);
         let y = read_f64(wkb, offset + 13, sub_le);
-        let z = if sub_has_z { read_f64(wkb, offset + 21, sub_le) } else { 0.0 };
+        let z = if sub_has_z {
+            read_f64(wkb, offset + 21, sub_le)
+        } else {
+            0.0
+        };
         let m = if sub_has_m {
             let m_off = if sub_has_z { offset + 29 } else { offset + 21 };
             read_f64(wkb, m_off, sub_le)
@@ -539,7 +543,12 @@ fn wkb_multipoint_to_shp(wkb: &[u8], is_le: bool, has_z: bool, has_m: bool) -> R
 }
 
 /// Convert a WKB MultiLineString to SHP PolyLine (parts = linestrings).
-fn wkb_multilinestring_to_shp(wkb: &[u8], is_le: bool, has_z: bool, has_m: bool) -> Result<Vec<u8>> {
+fn wkb_multilinestring_to_shp(
+    wkb: &[u8],
+    is_le: bool,
+    has_z: bool,
+    has_m: bool,
+) -> Result<Vec<u8>> {
     ensure_len(wkb, 9, "WKB MultiLineString")?;
     let num_lines = read_u32(wkb, 5, is_le) as usize;
     let mut offset = 9;
@@ -555,70 +564,57 @@ fn wkb_multilinestring_to_shp(wkb: &[u8], is_le: bool, has_z: bool, has_m: bool)
         parts.push(coords);
     }
 
-    build_shp_polyline(&parts.iter().map(|p| p.as_slice()).collect::<Vec<_>>(), has_z, has_m)
+    build_shp_polyline(
+        &parts.iter().map(|p| p.as_slice()).collect::<Vec<_>>(),
+        has_z,
+        has_m,
+    )
 }
 
 /// Convert a WKB MultiPolygon to SHP Polygon (all rings merged).
 fn wkb_multipolygon_to_shp(wkb: &[u8], is_le: bool, has_z: bool, has_m: bool) -> Result<Vec<u8>> {
     ensure_len(wkb, 9, "WKB MultiPolygon")?;
     let num_polygons = read_u32(wkb, 5, is_le) as usize;
-    let mut offset = 9;
+
     let mut all_rings: Vec<Vec<CoordND>> = Vec::new();
+    let mut off = 9;
+    let dim = 2 + has_z as usize + has_m as usize;
 
     for _ in 0..num_polygons {
-        ensure_len(wkb, offset + 5, "WKB MultiPolygon sub-polygon header")?;
-        let sub_le = wkb[offset] == 1;
-        offset += 5; // byte_order + type
-        let rings = parse_wkb_polygon_rings(wkb, offset, sub_le, has_z, has_m)?;
-        let total_coords: usize = rings.iter().map(|r| r.len()).sum();
-        let ring_count = rings.len();
-        offset += 4 + ring_count * 4 + total_coords * (2 + has_z as usize + has_m as usize) * 8;
-        // Wait, that's not right. Let me recalculate.
-        // After the ring count, for each ring: 4 bytes (num_points) + num_points * coord_size
-        // But parse_wkb_polygon_rings advances differently. Let me just track offset inside each parse.
-        // Actually, I need to recalculate offset properly. Let me fix this.
-        all_rings.extend(rings);
-    }
-
-    // Rebuild: just reparse properly
-    // Let me rewrite this to track offset properly
-    let all_rings = {
-        let mut rings = Vec::new();
-        let mut off = 9;
-        for _ in 0..num_polygons {
-            ensure_len(wkb, off + 5, "WKB MultiPolygon sub-polygon header")?;
-            let sub_le = wkb[off] == 1;
-            off += 5; // byte_order + type
-            ensure_len(wkb, off + 4, "WKB Polygon ring count")?;
-            let num_rings = read_u32(wkb, off, sub_le) as usize;
+        ensure_len(wkb, off + 5, "WKB MultiPolygon sub-polygon header")?;
+        let sub_le = wkb[off] == 1;
+        off += 5; // byte_order + type
+        ensure_len(wkb, off + 4, "WKB Polygon ring count")?;
+        let num_rings = read_u32(wkb, off, sub_le) as usize;
+        off += 4;
+        for _ in 0..num_rings {
+            ensure_len(wkb, off + 4, "WKB ring point count")?;
+            let num_pts = read_u32(wkb, off, sub_le) as usize;
             off += 4;
-            let dim = 2 + has_z as usize + has_m as usize;
-            for _ in 0..num_rings {
-                ensure_len(wkb, off + 4, "WKB ring point count")?;
-                let num_pts = read_u32(wkb, off, sub_le) as usize;
-                off += 4;
-                let coord_bytes = num_pts * dim * 8;
-                ensure_len(wkb, off + coord_bytes, "WKB ring coords")?;
-                let mut coords = Vec::with_capacity(num_pts);
-                for j in 0..num_pts {
-                    let base = off + j * dim * 8;
-                    let x = read_f64(wkb, base, sub_le);
-                    let y = read_f64(wkb, base + 8, sub_le);
-                    let z = if has_z { read_f64(wkb, base + 16, sub_le) } else { 0.0 };
-                    let m = if has_m {
-                        let m_off = if has_z { base + 24 } else { base + 16 };
-                        read_f64(wkb, m_off, sub_le)
-                    } else {
-                        -1.0e40
-                    };
-                    coords.push(CoordND { x, y, z, m });
-                }
-                off += coord_bytes;
-                rings.push(coords);
+            let coord_bytes = num_pts * dim * 8;
+            ensure_len(wkb, off + coord_bytes, "WKB ring coords")?;
+            let mut coords = Vec::with_capacity(num_pts);
+            for j in 0..num_pts {
+                let base = off + j * dim * 8;
+                let x = read_f64(wkb, base, sub_le);
+                let y = read_f64(wkb, base + 8, sub_le);
+                let z = if has_z {
+                    read_f64(wkb, base + 16, sub_le)
+                } else {
+                    0.0
+                };
+                let m = if has_m {
+                    let m_off = if has_z { base + 24 } else { base + 16 };
+                    read_f64(wkb, m_off, sub_le)
+                } else {
+                    -1.0e40
+                };
+                coords.push(CoordND { x, y, z, m });
             }
+            off += coord_bytes;
+            all_rings.push(coords);
         }
-        rings
-    };
+    }
 
     let ring_refs: Vec<&[CoordND]> = all_rings.iter().map(|r| r.as_slice()).collect();
     build_shp_polygon(&ring_refs, has_z, has_m)
@@ -655,7 +651,11 @@ fn build_shp_polyline(parts: &[&[CoordND]], has_z: bool, has_m: bool) -> Result<
     // + points(num_points*16)
     let base_size = 4 + 32 + 4 + 4 + num_parts * 4 + num_points * 16;
     let z_size = if has_z { 16 + num_points * 8 } else { 0 }; // z_range + z_array
-    let m_size = if has_z || has_m { 16 + num_points * 8 } else { 0 }; // m_range + m_array
+    let m_size = if has_z || has_m {
+        16 + num_points * 8
+    } else {
+        0
+    }; // m_range + m_array
 
     let mut out = Vec::with_capacity(base_size + z_size + m_size);
 
@@ -722,7 +722,11 @@ fn build_shp_polygon(rings: &[&[CoordND]], has_z: bool, has_m: bool) -> Result<V
 
     let base_size = 4 + 32 + 4 + 4 + num_parts * 4 + num_points * 16;
     let z_size = if has_z { 16 + num_points * 8 } else { 0 };
-    let m_size = if has_z || has_m { 16 + num_points * 8 } else { 0 };
+    let m_size = if has_z || has_m {
+        16 + num_points * 8
+    } else {
+        0
+    };
 
     let mut out = Vec::with_capacity(base_size + z_size + m_size);
 
@@ -782,7 +786,11 @@ fn build_shp_multipoint(coords: &[CoordND], has_z: bool, has_m: bool) -> Result<
 
     let base_size = 4 + 32 + 4 + num_points * 16;
     let z_size = if has_z { 16 + num_points * 8 } else { 0 };
-    let m_size = if has_z || has_m { 16 + num_points * 8 } else { 0 };
+    let m_size = if has_z || has_m {
+        16 + num_points * 8
+    } else {
+        0
+    };
 
     let mut out = Vec::with_capacity(base_size + z_size + m_size);
 
@@ -1109,8 +1117,8 @@ pub enum SpatialMode {
 
 // ── DataFrame-level conversion ────────────────────────────────────────
 
-use polars::prelude::*;
 use crate::field::{FieldMeta, FieldType};
+use polars::prelude::*;
 
 /// Return the names of all `SpatialObj` columns in the field metadata.
 pub fn spatial_column_names(fields: &[FieldMeta]) -> Vec<String> {
@@ -1124,38 +1132,32 @@ pub fn spatial_column_names(fields: &[FieldMeta]) -> Vec<String> {
 /// Convert all `SpatialObj` columns in a DataFrame from SHP to WKB binary.
 ///
 /// Non-spatial columns are passed through unchanged.
-pub fn convert_spatial_columns_to_wkb(
-    df: DataFrame,
-    fields: &[FieldMeta],
-) -> Result<DataFrame> {
+pub fn convert_spatial_columns_to_wkb(df: DataFrame, fields: &[FieldMeta]) -> Result<DataFrame> {
     let mut columns: Vec<Column> = Vec::with_capacity(df.width());
+    let height = df.height();
 
-    for col in df.get_columns() {
-        let is_spatial = fields
-            .iter()
-            .any(|f| f.name == col.name().as_str() && f.field_type == FieldType::SpatialObj);
+    for col in df.columns() {
+        let is_spatial = fields.iter().any(|f| {
+            f.name.as_str() == col.name().as_str() && f.field_type == FieldType::SpatialObj
+        });
 
         if is_spatial {
-            let binary = col
-                .binary()
-                .map_err(|e| YxdbError::ConversionError(format!("expected Binary column for SpatialObj: {e}")))?;
+            let binary = col.binary().map_err(|e| {
+                YxdbError::ConversionError(format!("expected Binary column for SpatialObj: {e}"))
+            })?;
             let converted: BinaryChunked = binary
                 .into_iter()
-                .map(|opt_bytes| {
-                    match opt_bytes {
+                .map(|opt_bytes| match opt_bytes {
+                    None => Ok(None),
+                    Some([]) => Ok(None),
+                    Some(shp_bytes) => match shp_to_wkb(shp_bytes)? {
                         None => Ok(None),
-                        Some(shp_bytes) if shp_bytes.is_empty() => Ok(None),
-                        Some(shp_bytes) => {
-                            match shp_to_wkb(shp_bytes)? {
-                                None => Ok(None),
-                                Some(wkb) => Ok(Some(wkb)),
-                            }
-                        }
-                    }
+                        Some(wkb) => Ok(Some(wkb)),
+                    },
                 })
                 .collect::<Result<Vec<Option<Vec<u8>>>>>()?
                 .into_iter()
-                .map(|opt| opt.map(|v| v.into_iter().collect::<Vec<u8>>()))
+                .map(|opt: Option<Vec<u8>>| opt.map(|v| v.into_iter().collect::<Vec<u8>>()))
                 .collect::<BinaryChunked>();
             let series = converted.with_name(col.name().clone()).into_series();
             columns.push(series.into());
@@ -1164,41 +1166,37 @@ pub fn convert_spatial_columns_to_wkb(
         }
     }
 
-    DataFrame::new(columns).map_err(|e| YxdbError::ConversionError(e.to_string()))
+    DataFrame::new(height, columns).map_err(|e| YxdbError::ConversionError(e.to_string()))
 }
 
 /// Convert all `SpatialObj` columns in a DataFrame from WKB back to SHP binary.
 ///
 /// This is used before writing: any Binary column targeted at a SpatialObj field
 /// is assumed to be WKB and is converted to SHP format.
-pub fn convert_spatial_columns_to_shp(
-    df: &DataFrame,
-    fields: &[FieldMeta],
-) -> Result<DataFrame> {
+pub fn convert_spatial_columns_to_shp(df: &DataFrame, fields: &[FieldMeta]) -> Result<DataFrame> {
     let mut columns: Vec<Column> = Vec::with_capacity(df.width());
+    let height = df.height();
 
-    for col in df.get_columns() {
-        let is_spatial = fields
-            .iter()
-            .any(|f| f.name == col.name().as_str() && f.field_type == FieldType::SpatialObj);
+    for col in df.columns() {
+        let is_spatial = fields.iter().any(|f| {
+            f.name.as_str() == col.name().as_str() && f.field_type == FieldType::SpatialObj
+        });
 
         if is_spatial {
-            let binary = col
-                .binary()
-                .map_err(|e| YxdbError::ConversionError(format!("expected Binary column for SpatialObj: {e}")))?;
+            let binary = col.binary().map_err(|e| {
+                YxdbError::ConversionError(format!("expected Binary column for SpatialObj: {e}"))
+            })?;
             let converted: Vec<Option<Vec<u8>>> = binary
                 .into_iter()
-                .map(|opt_bytes| {
-                    match opt_bytes {
-                        None => Ok(None),
-                        Some(wkb_bytes) if wkb_bytes.is_empty() => Ok(None),
-                        Some(wkb_bytes) => Ok(Some(wkb_to_shp(wkb_bytes)?)),
-                    }
+                .map(|opt_bytes| match opt_bytes {
+                    None => Ok(None),
+                    Some([]) => Ok(None),
+                    Some(wkb_bytes) => Ok(Some(wkb_to_shp(wkb_bytes)?)),
                 })
                 .collect::<Result<Vec<Option<Vec<u8>>>>>()?;
             let values: Vec<Option<&[u8]>> = converted
                 .iter()
-                .map(|opt| opt.as_deref())
+                .map(|opt: &Option<Vec<u8>>| opt.as_deref())
                 .collect();
             let series = Series::new(col.name().clone(), values);
             columns.push(series.into());
@@ -1207,7 +1205,7 @@ pub fn convert_spatial_columns_to_shp(
         }
     }
 
-    DataFrame::new(columns).map_err(|e| YxdbError::ConversionError(e.to_string()))
+    DataFrame::new(height, columns).map_err(|e| YxdbError::ConversionError(e.to_string()))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────
@@ -1215,6 +1213,12 @@ pub fn convert_spatial_columns_to_shp(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test helper: create a DataFrame from columns, inferring height.
+    fn test_df(columns: Vec<Column>) -> DataFrame {
+        let h = columns.first().map_or(0, |c| c.len());
+        DataFrame::new(h, columns).unwrap()
+    }
 
     #[test]
     fn null_shape() {
@@ -1318,7 +1322,7 @@ mod tests {
         shp.extend_from_slice(&1i32.to_le_bytes()); // num_parts
         shp.extend_from_slice(&3i32.to_le_bytes()); // num_points
         shp.extend_from_slice(&0i32.to_le_bytes()); // part[0]
-        // Points
+                                                    // Points
         for &(x, y) in &[(0.0f64, 0.0f64), (1.0, 1.0), (2.0, 2.0)] {
             shp.extend_from_slice(&x.to_le_bytes());
             shp.extend_from_slice(&y.to_le_bytes());
@@ -1345,7 +1349,7 @@ mod tests {
         shp.extend_from_slice(&1i32.to_le_bytes()); // num_parts
         shp.extend_from_slice(&4i32.to_le_bytes()); // num_points (closed ring)
         shp.extend_from_slice(&0i32.to_le_bytes()); // part[0]
-        // Clockwise triangle
+                                                    // Clockwise triangle
         for &(x, y) in &[(0.0f64, 0.0f64), (4.0, 0.0), (2.0, 3.0), (0.0, 0.0)] {
             shp.extend_from_slice(&x.to_le_bytes());
             shp.extend_from_slice(&y.to_le_bytes());
@@ -1368,7 +1372,7 @@ mod tests {
         shp.extend_from_slice(&3.0f64.to_le_bytes()); // xmax
         shp.extend_from_slice(&4.0f64.to_le_bytes()); // ymax
         shp.extend_from_slice(&2i32.to_le_bytes()); // num_points
-        // Point 1
+                                                    // Point 1
         shp.extend_from_slice(&1.0f64.to_le_bytes());
         shp.extend_from_slice(&2.0f64.to_le_bytes());
         // Point 2
@@ -1474,7 +1478,7 @@ mod tests {
             "geom".into(),
             vec![Some(pt1.as_slice()), Some(pt2.as_slice())],
         );
-        let df = DataFrame::new(vec![id_col.into(), geom_col.into()]).unwrap();
+        let df = test_df(vec![id_col.into(), geom_col.into()]);
 
         // Convert SHP → WKB
         let df_wkb = convert_spatial_columns_to_wkb(df, &fields).unwrap();
@@ -1506,11 +1510,8 @@ mod tests {
             offset: 0,
         }];
 
-        let geom_col = Series::new(
-            "geom".into(),
-            vec![None::<Vec<u8>>, None],
-        );
-        let df = DataFrame::new(vec![geom_col.into()]).unwrap();
+        let geom_col = Series::new("geom".into(), vec![None::<Vec<u8>>, None]);
+        let df = test_df(vec![geom_col.into()]);
 
         let df_wkb = convert_spatial_columns_to_wkb(df, &fields).unwrap();
         let col = df_wkb.column("geom").unwrap().binary().unwrap();
@@ -1531,7 +1532,7 @@ mod tests {
         shp.extend_from_slice(&1i32.to_le_bytes()); // num_parts
         shp.extend_from_slice(&2i32.to_le_bytes()); // num_points
         shp.extend_from_slice(&0i32.to_le_bytes()); // part[0]
-        // XY
+                                                    // XY
         shp.extend_from_slice(&0.0f64.to_le_bytes());
         shp.extend_from_slice(&0.0f64.to_le_bytes());
         shp.extend_from_slice(&1.0f64.to_le_bytes());
@@ -1589,15 +1590,13 @@ mod tests {
 
     #[test]
     fn spatial_column_names_empty_when_no_spatial() {
-        let fields = vec![
-            FieldMeta {
-                name: "id".into(),
-                field_type: FieldType::Int32,
-                size: 4,
-                scale: 0,
-                offset: 0,
-            },
-        ];
+        let fields = vec![FieldMeta {
+            name: "id".into(),
+            field_type: FieldType::Int32,
+            size: 4,
+            scale: 0,
+            offset: 0,
+        }];
 
         let names = spatial_column_names(&fields);
         assert!(names.is_empty());
@@ -1614,18 +1613,16 @@ mod tests {
             v
         };
 
-        let fields = vec![
-            FieldMeta {
-                name: "geom".into(),
-                field_type: FieldType::SpatialObj,
-                size: 0,
-                scale: 0,
-                offset: 0,
-            },
-        ];
+        let fields = vec![FieldMeta {
+            name: "geom".into(),
+            field_type: FieldType::SpatialObj,
+            size: 0,
+            scale: 0,
+            offset: 0,
+        }];
 
         let geom_col = Series::new("geom".into(), vec![Some(pt.as_slice())]);
-        let df = DataFrame::new(vec![geom_col.into()]).unwrap();
+        let df = test_df(vec![geom_col.into()]);
 
         // Both Wkb and GeoArrow should produce the same DataFrame
         let df_wkb = convert_spatial_columns_to_wkb(df.clone(), &fields).unwrap();

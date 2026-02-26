@@ -1,23 +1,27 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use pyo3_polars::PyDataFrame;
-use sigilyx_core::{read_yxdb_to_ipc, read_yxdb_to_ipc_batches, YxdbReader, YxdbRowReader, FieldValue, SpatialMode};
+use sigilyx_core::{
+    read_yxdb_to_ipc, read_yxdb_to_ipc_batches, FieldValue, SpatialMode, YxdbReader, YxdbRowReader,
+};
 
+use sigilyx_core::YxdbWriter;
 use std::fs::File;
 use std::io::BufWriter;
-use sigilyx_core::YxdbWriter;
 
 /// Convert a sigilyx_core error to the most appropriate Python exception.
 fn to_py_err(e: sigilyx_core::YxdbError) -> PyErr {
     use sigilyx_core::YxdbError;
     match &e {
-        YxdbError::Io(io_err) => {
-            match io_err.kind() {
-                std::io::ErrorKind::NotFound => pyo3::exceptions::PyFileNotFoundError::new_err(e.to_string()),
-                std::io::ErrorKind::PermissionDenied => pyo3::exceptions::PyPermissionError::new_err(e.to_string()),
-                _ => pyo3::exceptions::PyOSError::new_err(e.to_string()),
+        YxdbError::Io(io_err) => match io_err.kind() {
+            std::io::ErrorKind::NotFound => {
+                pyo3::exceptions::PyFileNotFoundError::new_err(e.to_string())
             }
-        }
+            std::io::ErrorKind::PermissionDenied => {
+                pyo3::exceptions::PyPermissionError::new_err(e.to_string())
+            }
+            _ => pyo3::exceptions::PyOSError::new_err(e.to_string()),
+        },
         YxdbError::InvalidFile(_) | YxdbError::XmlError(_) | YxdbError::LzfError(_) => {
             pyo3::exceptions::PyValueError::new_err(e.to_string())
         }
@@ -28,8 +32,9 @@ fn to_py_err(e: sigilyx_core::YxdbError) -> PyErr {
 }
 
 /// Parse a Python spatial mode string into a SpatialMode enum.
+/// Accepts any casing (e.g. "WKB", "wkb", "Wkb" all work).
 fn parse_spatial_mode(mode: &str) -> PyResult<SpatialMode> {
-    match mode {
+    match mode.to_ascii_lowercase().as_str() {
         "wkb" => Ok(SpatialMode::Wkb),
         "raw" => Ok(SpatialMode::Raw),
         "geoarrow" => Ok(SpatialMode::GeoArrow),
@@ -54,8 +59,7 @@ fn parse_spatial_mode(mode: &str) -> PyResult<SpatialMode> {
 #[pyo3(signature = (path, spatial = "wkb"))]
 fn read_yxdb_df(path: &str, spatial: &str) -> PyResult<PyDataFrame> {
     let mode = parse_spatial_mode(spatial)?;
-    let df = sigilyx_core::read_yxdb(path, mode)
-        .map_err(to_py_err)?;
+    let df = sigilyx_core::read_yxdb(path, mode).map_err(to_py_err)?;
     Ok(PyDataFrame(df))
 }
 
@@ -72,8 +76,7 @@ fn read_yxdb_df(path: &str, spatial: &str) -> PyResult<PyDataFrame> {
 fn read_yxdb_df_columns(path: &str, columns: Vec<String>, spatial: &str) -> PyResult<PyDataFrame> {
     let mode = parse_spatial_mode(spatial)?;
     let col_refs: Vec<&str> = columns.iter().map(|s| s.as_str()).collect();
-    let df = sigilyx_core::read_yxdb_columns(path, &col_refs, mode)
-        .map_err(to_py_err)?;
+    let df = sigilyx_core::read_yxdb_columns(path, &col_refs, mode).map_err(to_py_err)?;
     Ok(PyDataFrame(df))
 }
 
@@ -90,11 +93,135 @@ fn read_yxdb_df_columns(path: &str, columns: Vec<String>, spatial: &str) -> PyRe
 /// ```
 #[pyfunction]
 #[pyo3(signature = (path, pydf, spatial_columns = None))]
-fn write_yxdb_df(path: &str, pydf: PyDataFrame, spatial_columns: Option<Vec<String>>) -> PyResult<()> {
+fn write_yxdb_df(
+    path: &str,
+    pydf: PyDataFrame,
+    spatial_columns: Option<Vec<String>>,
+) -> PyResult<()> {
     let cols = spatial_columns.unwrap_or_default();
     let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
-    sigilyx_core::write_yxdb(path, &pydf.0, &col_refs)
-        .map_err(to_py_err)?;
+    sigilyx_core::write_yxdb(path, &pydf.0, &col_refs).map_err(to_py_err)?;
+    Ok(())
+}
+
+/// Write a Polars DataFrame to YXDB with an explicit field schema.
+///
+/// ``type_overrides`` is a dict mapping column name to a dict with keys:
+///   - ``type``: YXDB type name (e.g. ``"String"``, ``"WString"``, ``"V_String"``, ``"V_WString"``)
+///   - ``size`` (optional): field size (max chars for strings, precision for FixedDecimal)
+///   - ``scale`` (optional): scale (only for FixedDecimal)
+///
+/// Columns not in ``type_overrides`` use the default inferred type.
+///
+/// ```python
+/// from sigilyx import write_yxdb_df_with_overrides
+/// write_yxdb_df_with_overrides("out.yxdb", df, {"name": {"type": "String", "size": 64}})
+/// ```
+#[pyfunction]
+#[pyo3(signature = (path, pydf, type_overrides, spatial_columns = None))]
+fn write_yxdb_df_with_overrides(
+    path: &str,
+    pydf: PyDataFrame,
+    type_overrides: &Bound<'_, PyDict>,
+    spatial_columns: Option<Vec<String>>,
+) -> PyResult<()> {
+    let spatial_cols = spatial_columns.unwrap_or_default();
+    let spatial_refs: Vec<&str> = spatial_cols.iter().map(|s| s.as_str()).collect();
+    let mut fields =
+        sigilyx_core::infer_schema_public(&pydf.0, &spatial_refs).map_err(to_py_err)?;
+
+    apply_type_overrides(&mut fields, type_overrides)?;
+
+    sigilyx_core::write_yxdb_with_schema(path, &pydf.0, &fields).map_err(to_py_err)?;
+    Ok(())
+}
+
+/// Write YXDB from IPC bytes with explicit field type overrides.
+///
+/// This is the IPC fallback for ``write_yxdb_df_with_overrides`` when
+/// the direct DataFrame path fails due to pyo3-polars compat_level mismatch.
+#[pyfunction]
+#[pyo3(signature = (path, ipc_bytes, type_overrides, spatial_columns = None))]
+fn write_yxdb_ipc_with_overrides(
+    _py: Python<'_>,
+    path: &str,
+    ipc_bytes: &[u8],
+    type_overrides: &Bound<'_, PyDict>,
+    spatial_columns: Option<Vec<String>>,
+) -> PyResult<()> {
+    let df = sigilyx_core::ipc_to_dataframe(ipc_bytes).map_err(to_py_err)?;
+
+    let spatial_cols = spatial_columns.unwrap_or_default();
+    let spatial_refs: Vec<&str> = spatial_cols.iter().map(|s| s.as_str()).collect();
+    let mut fields = sigilyx_core::infer_schema_public(&df, &spatial_refs).map_err(to_py_err)?;
+
+    apply_type_overrides(&mut fields, type_overrides)?;
+
+    sigilyx_core::write_yxdb_with_schema(path, &df, &fields).map_err(to_py_err)?;
+    Ok(())
+}
+
+/// Apply type overrides from a Python dict to a mutable field schema.
+///
+/// Shared logic used by both the direct DataFrame and IPC write paths.
+fn apply_type_overrides(
+    fields: &mut [sigilyx_core::FieldMeta],
+    type_overrides: &Bound<'_, PyDict>,
+) -> PyResult<()> {
+    use sigilyx_core::field::FieldType;
+
+    for (key, value) in type_overrides.iter() {
+        let col_name: String = key.extract()?;
+        let override_dict: &Bound<'_, PyDict> = value.cast()?;
+
+        let type_str: String = override_dict
+            .get_item("type")?
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "type_overrides[{col_name:?}] must have a 'type' key"
+                ))
+            })?
+            .extract()?;
+
+        let field_type: FieldType = type_str.parse().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown YXDB type {type_str:?} for column {col_name:?}"
+            ))
+        })?;
+
+        let size: Option<usize> = override_dict
+            .get_item("size")?
+            .map(|v| v.extract())
+            .transpose()?;
+        let scale: Option<usize> = override_dict
+            .get_item("scale")?
+            .map(|v| v.extract())
+            .transpose()?;
+
+        let field = fields
+            .iter_mut()
+            .find(|f| f.name == col_name)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "column {col_name:?} not found in DataFrame"
+                ))
+            })?;
+        field.field_type = field_type;
+        if let Some(s) = size {
+            field.size = s;
+        }
+        if let Some(s) = scale {
+            field.scale = s;
+        }
+    }
+
+    // Recompute offsets after overrides
+    let mut offset = 0;
+    for field in fields.iter_mut() {
+        field.offset = offset;
+        offset += field.field_type.fixed_bytes(field.size);
+    }
+
     Ok(())
 }
 
@@ -127,8 +254,7 @@ fn wkb_to_shp_py(py: Python<'_>, wkb: &[u8]) -> PyResult<Py<PyBytes>> {
 #[pyo3(signature = (path, spatial = "wkb"))]
 fn read_yxdb(py: Python<'_>, path: &str, spatial: &str) -> PyResult<Py<PyBytes>> {
     let mode = parse_spatial_mode(spatial)?;
-    let ipc_bytes = read_yxdb_to_ipc(path, mode)
-        .map_err(to_py_err)?;
+    let ipc_bytes = read_yxdb_to_ipc(path, mode).map_err(to_py_err)?;
     Ok(PyBytes::new(py, &ipc_bytes).into())
 }
 
@@ -136,9 +262,8 @@ fn read_yxdb(py: Python<'_>, path: &str, spatial: &str) -> PyResult<Py<PyBytes>>
 ///
 /// Each dict contains: name, type, size, scale.
 #[pyfunction]
-fn read_yxdb_schema(py: Python<'_>, path: &str) -> PyResult<PyObject> {
-    let reader = YxdbReader::open(path)
-        .map_err(to_py_err)?;
+fn read_yxdb_schema(py: Python<'_>, path: &str) -> PyResult<Py<PyAny>> {
+    let reader = YxdbReader::open(path).map_err(to_py_err)?;
 
     let list = pyo3::types::PyList::empty(py);
     for field in &reader.fields {
@@ -155,8 +280,7 @@ fn read_yxdb_schema(py: Python<'_>, path: &str) -> PyResult<PyObject> {
 /// Return the number of records in a YXDB file without reading all data.
 #[pyfunction]
 fn read_yxdb_record_count(path: &str) -> PyResult<u64> {
-    let reader = YxdbReader::open(path)
-        .map_err(to_py_err)?;
+    let reader = YxdbReader::open(path).map_err(to_py_err)?;
     Ok(reader.header.num_records)
 }
 
@@ -168,9 +292,8 @@ fn read_yxdb_record_count(path: &str) -> PyResult<u64> {
 ///   - ``file_id`` (int): the file ID/version from the header
 ///   - ``spatial_columns`` (list[str]): names of SpatialObj columns
 #[pyfunction]
-fn read_yxdb_spatial_info(py: Python<'_>, path: &str) -> PyResult<PyObject> {
-    let reader = YxdbReader::open(path)
-        .map_err(to_py_err)?;
+fn read_yxdb_spatial_info(py: Python<'_>, path: &str) -> PyResult<Py<PyAny>> {
+    let reader = YxdbReader::open(path).map_err(to_py_err)?;
     let dict = PyDict::new(py);
     dict.set_item("has_spatial_index", reader.header.has_spatial_index())?;
     dict.set_item("spatial_index_pos", reader.header.spatial_index_pos)?;
@@ -190,10 +313,19 @@ fn read_yxdb_spatial_info(py: Python<'_>, path: &str) -> PyResult<PyObject> {
 /// This enables streaming / memory-efficient processing of large files.
 #[pyfunction]
 #[pyo3(signature = (path, batch_size = 65536, spatial = "wkb"))]
-fn read_yxdb_batches(py: Python<'_>, path: &str, batch_size: usize, spatial: &str) -> PyResult<Vec<Py<PyBytes>>> {
+fn read_yxdb_batches(
+    py: Python<'_>,
+    path: &str,
+    batch_size: usize,
+    spatial: &str,
+) -> PyResult<Vec<Py<PyBytes>>> {
+    if batch_size == 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "batch_size must be > 0",
+        ));
+    }
     let mode = parse_spatial_mode(spatial)?;
-    let ipc_chunks = read_yxdb_to_ipc_batches(path, batch_size, mode)
-        .map_err(to_py_err)?;
+    let ipc_chunks = read_yxdb_to_ipc_batches(path, batch_size, mode).map_err(to_py_err)?;
     let py_chunks: Vec<Py<PyBytes>> = ipc_chunks
         .iter()
         .map(|chunk| PyBytes::new(py, chunk).into())
@@ -214,11 +346,15 @@ fn read_yxdb_batches(py: Python<'_>, path: &str, batch_size: usize, spatial: &st
 /// ```
 #[pyfunction]
 #[pyo3(signature = (path, ipc_bytes, spatial_columns = None))]
-fn write_yxdb(_py: Python<'_>, path: &str, ipc_bytes: &[u8], spatial_columns: Option<Vec<String>>) -> PyResult<()> {
+fn write_yxdb(
+    _py: Python<'_>,
+    path: &str,
+    ipc_bytes: &[u8],
+    spatial_columns: Option<Vec<String>>,
+) -> PyResult<()> {
     let cols = spatial_columns.unwrap_or_default();
     let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
-    sigilyx_core::write_yxdb_from_ipc_spatial(path, ipc_bytes, &col_refs)
-        .map_err(to_py_err)?;
+    sigilyx_core::write_yxdb_from_ipc_spatial(path, ipc_bytes, &col_refs).map_err(to_py_err)?;
     Ok(())
 }
 
@@ -248,17 +384,20 @@ impl YxdbStreamWriter {
     ///   with the correct column types.
     #[new]
     fn new(path: &str, schema_ipc_bytes: &[u8]) -> PyResult<Self> {
-        let writer = sigilyx_core::create_writer_from_ipc(path, schema_ipc_bytes)
-            .map_err(to_py_err)?;
-        Ok(Self { writer: Some(writer) })
+        let writer =
+            sigilyx_core::create_writer_from_ipc(path, schema_ipc_bytes).map_err(to_py_err)?;
+        Ok(Self {
+            writer: Some(writer),
+        })
     }
 
     /// Write a batch of records (as Arrow IPC bytes) to the YXDB file.
     fn write_batch(&mut self, ipc_bytes: &[u8]) -> PyResult<()> {
-        let writer = self.writer.as_mut()
+        let writer = self
+            .writer
+            .as_mut()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("writer already finished"))?;
-        sigilyx_core::writer_write_batch_from_ipc(writer, ipc_bytes)
-            .map_err(to_py_err)
+        sigilyx_core::writer_write_batch_from_ipc(writer, ipc_bytes).map_err(to_py_err)
     }
 
     /// Finalize the YXDB file and return the total number of records written.
@@ -266,17 +405,39 @@ impl YxdbStreamWriter {
     /// This updates the header with the final record count. Must be called
     /// to produce a valid YXDB file.
     fn finish(&mut self) -> PyResult<u64> {
-        let writer = self.writer.take()
+        let writer = self
+            .writer
+            .take()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("writer already finished"))?;
         let count = writer.record_count();
-        writer.finish()
-            .map_err(to_py_err)?;
+        writer.finish().map_err(to_py_err)?;
         Ok(count)
+    }
+
+    /// Context manager entry — returns self.
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    /// Context manager exit — automatically calls finish() if not already done.
+    #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
+    fn __exit__(
+        &mut self,
+        _exc_type: Option<&Bound<'_, pyo3::types::PyType>>,
+        _exc_val: Option<&Bound<'_, pyo3::PyAny>>,
+        _exc_tb: Option<&Bound<'_, pyo3::PyAny>>,
+    ) -> PyResult<bool> {
+        if self.writer.is_some() {
+            self.finish()?;
+        }
+        Ok(false) // don't suppress exceptions
     }
 
     /// Get the current record count.
     fn record_count(&self) -> PyResult<u64> {
-        let writer = self.writer.as_ref()
+        let writer = self
+            .writer
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("writer already finished"))?;
         Ok(writer.record_count())
     }
@@ -319,8 +480,12 @@ impl PyYxdbBatchReader {
         columns: Option<Vec<String>>,
         n_rows: Option<u64>,
     ) -> PyResult<Self> {
-        let reader = YxdbReader::open(path)
-            .map_err(to_py_err)?;
+        if batch_size == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "batch_size must be > 0",
+            ));
+        }
+        let reader = YxdbReader::open(path).map_err(to_py_err)?;
         Ok(Self {
             reader: Some(reader),
             batch_size,
@@ -360,7 +525,7 @@ impl PyYxdbBatchReader {
         let col_refs: Option<&[&str]> = col_strs.as_deref();
 
         // Release the GIL during the heavy IO/decompression/parsing work.
-        let df = py.allow_threads(|| {
+        let df = py.detach(|| {
             reader
                 .next_batch(effective_batch, col_refs)
                 .map_err(to_py_err)
@@ -376,7 +541,7 @@ impl PyYxdbBatchReader {
     }
 
     /// Return the schema (list of field dicts) without consuming data.
-    fn schema(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn schema(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let reader = self
             .reader
             .as_ref()
@@ -398,7 +563,7 @@ impl PyYxdbBatchReader {
 // ── Row-by-Row Reader ────────────────────────────────────────────────
 
 /// Convert a Rust FieldValue to a Python object.
-fn field_value_to_py(py: Python<'_>, val: FieldValue) -> PyObject {
+fn field_value_to_py(py: Python<'_>, val: FieldValue) -> Py<PyAny> {
     match val {
         FieldValue::Bool(None)
         | FieldValue::Byte(None)
@@ -443,44 +608,50 @@ struct PyYxdbRowReader {
 impl PyYxdbRowReader {
     #[new]
     fn new(path: &str) -> PyResult<Self> {
-        let reader = YxdbRowReader::open(path)
-            .map_err(to_py_err)?;
-        Ok(Self { reader: Some(reader) })
+        let reader = YxdbRowReader::open(path).map_err(to_py_err)?;
+        Ok(Self {
+            reader: Some(reader),
+        })
     }
 
     /// Advance to the next record. Returns True if a record is available.
     fn next_record(&mut self) -> PyResult<bool> {
-        let reader = self.reader.as_mut()
+        let reader = self
+            .reader
+            .as_mut()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("reader is closed"))?;
-        reader.next()
-            .map_err(to_py_err)
+        reader.next().map_err(to_py_err)
     }
 
     /// Read a field value by column index (0-based).
-    fn read_index(&self, py: Python<'_>, index: usize) -> PyResult<PyObject> {
-        let reader = self.reader.as_ref()
+    fn read_index(&self, py: Python<'_>, index: usize) -> PyResult<Py<PyAny>> {
+        let reader = self
+            .reader
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("reader is closed"))?;
-        let val = reader.read_index(index)
-            .map_err(to_py_err)?;
+        let val = reader.read_index(index).map_err(to_py_err)?;
         Ok(field_value_to_py(py, val))
     }
 
     /// Read a field value by column name.
-    fn read_name(&self, py: Python<'_>, name: &str) -> PyResult<PyObject> {
-        let reader = self.reader.as_ref()
+    fn read_name(&self, py: Python<'_>, name: &str) -> PyResult<Py<PyAny>> {
+        let reader = self
+            .reader
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("reader is closed"))?;
-        let val = reader.read_name(name)
-            .map_err(to_py_err)?;
+        let val = reader.read_name(name).map_err(to_py_err)?;
         Ok(field_value_to_py(py, val))
     }
 
     /// Read all field values from the current record as a tuple.
     fn read_all(&self, py: Python<'_>) -> PyResult<Py<PyTuple>> {
-        let reader = self.reader.as_ref()
+        let reader = self
+            .reader
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("reader is closed"))?;
-        let values = reader.read_all()
-            .map_err(to_py_err)?;
-        let py_vals: Vec<PyObject> = values.into_iter()
+        let values = reader.read_all().map_err(to_py_err)?;
+        let py_vals: Vec<Py<PyAny>> = values
+            .into_iter()
             .map(|v| field_value_to_py(py, v))
             .collect();
         Ok(PyTuple::new(py, &py_vals)?.into())
@@ -488,10 +659,11 @@ impl PyYxdbRowReader {
 
     /// Read all field values as a dict {name: value}.
     fn read_dict(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
-        let reader = self.reader.as_ref()
+        let reader = self
+            .reader
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("reader is closed"))?;
-        let values = reader.read_all()
-            .map_err(to_py_err)?;
+        let values = reader.read_all().map_err(to_py_err)?;
         let dict = PyDict::new(py);
         for (field, val) in reader.fields().iter().zip(values.into_iter()) {
             dict.set_item(&field.name, field_value_to_py(py, val))?;
@@ -501,14 +673,18 @@ impl PyYxdbRowReader {
 
     /// Return the total number of records in the file (from header).
     fn num_records(&self) -> PyResult<u64> {
-        let reader = self.reader.as_ref()
+        let reader = self
+            .reader
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("reader is closed"))?;
         Ok(reader.num_records())
     }
 
     /// Return field metadata as a list of dicts.
     fn fields(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
-        let reader = self.reader.as_ref()
+        let reader = self
+            .reader
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("reader is closed"))?;
         let list = PyList::empty(py);
         for field in reader.fields() {
@@ -535,6 +711,8 @@ fn sigilyx(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_yxdb_df, m)?)?;
     m.add_function(wrap_pyfunction!(read_yxdb_df_columns, m)?)?;
     m.add_function(wrap_pyfunction!(write_yxdb_df, m)?)?;
+    m.add_function(wrap_pyfunction!(write_yxdb_df_with_overrides, m)?)?;
+    m.add_function(wrap_pyfunction!(write_yxdb_ipc_with_overrides, m)?)?;
     m.add_function(wrap_pyfunction!(shp_to_wkb_py, m)?)?;
     m.add_function(wrap_pyfunction!(wkb_to_shp_py, m)?)?;
     m.add_function(wrap_pyfunction!(read_yxdb_schema, m)?)?;

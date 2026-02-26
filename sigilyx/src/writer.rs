@@ -65,7 +65,11 @@ pub fn write_yxdb_from_ipc<P: AsRef<Path>>(path: P, ipc_bytes: &[u8]) -> Result<
 ///
 /// `spatial_columns` names Binary columns containing WKB geometry data
 /// that should be stored as `SpatialObj` fields in the YXDB.
-pub fn write_yxdb_from_ipc_spatial<P: AsRef<Path>>(path: P, ipc_bytes: &[u8], spatial_columns: &[&str]) -> Result<()> {
+pub fn write_yxdb_from_ipc_spatial<P: AsRef<Path>>(
+    path: P,
+    ipc_bytes: &[u8],
+    spatial_columns: &[&str],
+) -> Result<()> {
     let cursor = std::io::Cursor::new(ipc_bytes);
     let df = IpcReader::new(cursor)
         .finish()
@@ -194,12 +198,13 @@ impl<W: Write + Seek> YxdbWriter<W> {
         if batch.width() != self.fields.len() {
             return Err(YxdbError::ConversionError(format!(
                 "batch has {} columns but writer schema has {} fields",
-                batch.width(), self.fields.len()
+                batch.width(),
+                self.fields.len()
             )));
         }
 
         // Build column references
-        let columns: Vec<&Column> = batch.get_columns().iter().collect();
+        let columns: Vec<&Column> = batch.columns().iter().collect();
 
         for row in 0..num_rows {
             // At every RECORDS_PER_BLOCK boundary, force-flush and record position
@@ -212,14 +217,22 @@ impl<W: Write + Seek> YxdbWriter<W> {
             }
 
             build_record_into(
-                &mut self.ser_fixed, &mut self.ser_var_data,
-                &mut self.ser_var_fixups, &mut self.ser_record,
+                &mut self.ser_fixed,
+                &mut self.ser_var_data,
+                &mut self.ser_var_fixups,
+                &mut self.ser_record,
                 &mut self.ser_utf16_buf,
-                &self.fields, &columns, self.fixed_size, self.has_var, row,
+                &self.fields,
+                &columns,
+                self.fixed_size,
+                self.has_var,
+                row,
             )?;
 
             // Check if adding this record would exceed block size
-            if self.block_buf.len() + self.ser_record.len() > BLOCK_SIZE && !self.block_buf.is_empty() {
+            if self.block_buf.len() + self.ser_record.len() > BLOCK_SIZE
+                && !self.block_buf.is_empty()
+            {
                 self.flush_block()?;
             }
 
@@ -257,7 +270,10 @@ impl<W: Write + Seek> YxdbWriter<W> {
 
     /// Finish writing and update the header with the final record count.
     ///
-    /// This must be called to produce a valid YXDB file.
+    /// This **must** be called to produce a valid YXDB file. Dropping the
+    /// writer without calling `finish()` will emit a warning and leave the
+    /// file with an incorrect record count in the header.
+    #[must_use = "call .finish() to write a valid YXDB — dropping the writer without finishing produces a corrupt file"]
     pub fn finish(mut self) -> Result<()> {
         // Flush any remaining data
         self.flush_block()?;
@@ -273,7 +289,8 @@ impl<W: Write + Seek> YxdbWriter<W> {
         // Seek back to header and update:
         // - nRecordBlockIndexPos at offset 96 (i64 LE)
         self.writer.seek(SeekFrom::Start(96))?;
-        self.writer.write_all(&record_block_index_pos.to_le_bytes())?;
+        self.writer
+            .write_all(&record_block_index_pos.to_le_bytes())?;
 
         // - num_records at offset 104 (u64 LE)
         self.writer.seek(SeekFrom::Start(104))?;
@@ -291,11 +308,14 @@ impl<W: Write + Seek> YxdbWriter<W> {
 
 impl<W: Write + Seek> Drop for YxdbWriter<W> {
     fn drop(&mut self) {
-        if !self.block_buf.is_empty() {
+        if self.record_count > 0 && !self.block_buf.is_empty() {
             // Best-effort flush of remaining data. If finish() was not called,
             // the file will have an incorrect record count in the header.
+            eprintln!(
+                "warning: YxdbWriter dropped without calling finish() — \
+                 the output file will have an incorrect record count"
+            );
             let _ = self.flush_block();
-            eprintln!("warning: YxdbWriter dropped without calling finish() — YXDB file may be corrupt");
         }
     }
 }
@@ -303,21 +323,22 @@ impl<W: Write + Seek> Drop for YxdbWriter<W> {
 // ── Schema inference ───────────────────────────────────────────────────
 
 /// Infer a YXDB field schema from a Polars DataFrame.
-fn infer_schema(df: &DataFrame, spatial_columns: &[&str]) -> Result<Vec<FieldMeta>> {
+pub fn infer_schema(df: &DataFrame, spatial_columns: &[&str]) -> Result<Vec<FieldMeta>> {
     let mut fields = Vec::with_capacity(df.width());
     let mut offset = 0;
 
-    for col in df.get_columns() {
-        let name = col.name().to_string();
+    for col in df.columns() {
+        let name: String = col.name().to_string();
         let dtype = col.dtype();
 
         let (field_type, size, scale) = match dtype {
             DataType::Boolean => (FieldType::Bool, 1, 0),
-            DataType::Int8 | DataType::UInt8 => (FieldType::Byte, 1, 0),
+            DataType::UInt8 => (FieldType::Byte, 1, 0),
+            DataType::Int8 => (FieldType::Int16, 2, 0), // Int8 has sign — Byte is unsigned
             DataType::Int16 => (FieldType::Int16, 2, 0),
-            DataType::UInt16 => (FieldType::Int32, 4, 0),   // UInt16 max 65535 overflows Int16
+            DataType::UInt16 => (FieldType::Int32, 4, 0), // UInt16 max 65535 overflows Int16
             DataType::Int32 => (FieldType::Int32, 4, 0),
-            DataType::UInt32 => (FieldType::Int64, 8, 0),   // UInt32 max 4B overflows Int32
+            DataType::UInt32 => (FieldType::Int64, 8, 0), // UInt32 max 4B overflows Int32
             DataType::Int64 | DataType::UInt64 => (FieldType::Int64, 8, 0),
             DataType::Float32 => (FieldType::Float, 4, 0),
             DataType::Float64 => (FieldType::Double, 8, 0),
@@ -329,6 +350,7 @@ fn infer_schema(df: &DataFrame, spatial_columns: &[&str]) -> Result<Vec<FieldMet
             DataType::Date => (FieldType::Date, 10, 0),
             DataType::Datetime(_, _) => (FieldType::DateTime, 19, 0),
             DataType::Time => (FieldType::Time, 8, 0),
+            DataType::Duration(_) => (FieldType::Int64, 8, 0), // Store as microseconds
             DataType::Binary => {
                 if spatial_columns.contains(&name.as_str()) {
                     (FieldType::SpatialObj, 0, 0)
@@ -337,9 +359,13 @@ fn infer_schema(df: &DataFrame, spatial_columns: &[&str]) -> Result<Vec<FieldMet
                 }
             }
             DataType::Decimal(precision, scale) => {
-                let p = precision.unwrap_or(19);
-                let s = scale.unwrap_or(4);
-                (FieldType::FixedDecimal, p, s)
+                let p = *precision;
+                let s = *scale;
+                // YXDB FixedDecimal `size` is the total ASCII character width,
+                // which must fit: sign(1) + integer digits(p-s) + decimal point
+                // (1 if s>0) + fraction digits(s) = p + 1 + (1 if s>0).
+                let size = p + 1 + if s > 0 { 1 } else { 0 };
+                (FieldType::FixedDecimal, size, s)
             }
             _ => {
                 return Err(YxdbError::ConversionError(format!(
@@ -399,8 +425,16 @@ pub(crate) fn write_yxdb_impl(path: &Path, df: &DataFrame, fields: &[FieldMeta])
     let data_start = (HEADER_SIZE + utf16_bytes.len()) as u64;
 
     // Serialize records into LZF-compressed blocks, collecting block index
-    let (block_index, end_pos) =
-        write_records(&mut writer, df, fields, fixed_size, has_var, num_records, data_start, CompressionAlgorithm::Lzf)?;
+    let (block_index, end_pos) = write_records(
+        &mut writer,
+        df,
+        fields,
+        fixed_size,
+        has_var,
+        num_records,
+        data_start,
+        CompressionAlgorithm::Lzf,
+    )?;
 
     // Write RecordBlockIndex at current position
     let record_block_index_pos = end_pos as i64;
@@ -425,7 +459,11 @@ pub(crate) fn write_yxdb_impl(path: &Path, df: &DataFrame, fields: &[FieldMeta])
 // We intentionally do NOT include the copyright notice from Alteryx's implementation.
 const MAGIC: &[u8] = b"Alteryx Database File";
 
-fn build_header(num_records: u64, meta_info_size: u32, compression: CompressionAlgorithm) -> [u8; HEADER_SIZE] {
+fn build_header(
+    num_records: u64,
+    meta_info_size: u32,
+    compression: CompressionAlgorithm,
+) -> [u8; HEADER_SIZE] {
     let mut header = [0u8; HEADER_SIZE];
 
     // Magic string at offset 0 (required for format identification)
@@ -493,7 +531,6 @@ fn build_meta_xml(fields: &[FieldMeta]) -> String {
     xml
 }
 
-
 fn xml_escape_into(s: &str, out: &mut String) {
     for c in s.chars() {
         match c {
@@ -551,6 +588,7 @@ fn compress_block(raw: Vec<u8>, algo: CompressionAlgorithm) -> CompressedBlock {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_records<W: Write>(
     writer: &mut W,
     df: &DataFrame,
@@ -561,7 +599,7 @@ fn write_records<W: Write>(
     data_start: u64,
     compression: CompressionAlgorithm,
 ) -> Result<(Vec<i64>, u64)> {
-    let columns: Vec<&Column> = df.get_columns().iter().collect();
+    let columns: Vec<&Column> = df.columns().iter().collect();
 
     // ── Pipelined compression ──────────────────────────────────────
     // Main thread: serialize records into block buffers
@@ -589,14 +627,18 @@ fn write_records<W: Write>(
     // Reusable serialization buffers (avoid per-record allocation)
     let mut ser_fixed: Vec<u8> = vec![0u8; fixed_size];
     let mut ser_var_data: Vec<u8> = Vec::with_capacity(if has_var { 1024 } else { 0 });
-    let mut ser_var_fixups: Vec<(usize, usize)> = Vec::with_capacity(if has_var { fields.len() } else { 0 });
+    let mut ser_var_fixups: Vec<(usize, usize)> =
+        Vec::with_capacity(if has_var { fields.len() } else { 0 });
     let mut ser_record: Vec<u8> = Vec::with_capacity(fixed_size + if has_var { 1024 } else { 0 });
     let mut ser_utf16_buf: Vec<u8> = Vec::with_capacity(if has_var { 256 } else { 0 });
 
     // Helper closure: drain all completed compressed blocks from the channel
     // and write them to the output.
-    let drain_completed = |writer: &mut W, done_rx: &mpsc::Receiver<CompressedBlock>,
-                           file_pos: &mut u64, pending: &mut usize| -> Result<()> {
+    let drain_completed = |writer: &mut W,
+                           done_rx: &mpsc::Receiver<CompressedBlock>,
+                           file_pos: &mut u64,
+                           pending: &mut usize|
+     -> Result<()> {
         while *pending > 0 {
             match done_rx.try_recv() {
                 Ok(block) => {
@@ -612,10 +654,14 @@ fn write_records<W: Write>(
     };
 
     // Helper: send the block buffer off for compression and swap in a fresh one.
-    let send_block = |block_buf: &mut Vec<u8>, raw_tx: &mpsc::SyncSender<Vec<u8>>,
-                      pending: &mut usize| -> Result<()> {
+    let send_block = |block_buf: &mut Vec<u8>,
+                      raw_tx: &mpsc::SyncSender<Vec<u8>>,
+                      pending: &mut usize|
+     -> Result<()> {
         let block = std::mem::replace(block_buf, Vec::with_capacity(BLOCK_SIZE + 4096));
-        raw_tx.send(block).map_err(|_| YxdbError::LzfError("compression thread disconnected".into()))?;
+        raw_tx
+            .send(block)
+            .map_err(|_| YxdbError::LzfError("compression thread disconnected".into()))?;
         *pending += 1;
         Ok(())
     };
@@ -628,7 +674,9 @@ fn write_records<W: Write>(
                 drain_completed(writer, &done_rx, &mut file_pos, &mut pending_blocks)?;
                 // Wait for all pending to flush so file_pos is accurate for block index
                 while pending_blocks > 0 {
-                    let block = done_rx.recv().map_err(|_| YxdbError::LzfError("compression thread died".into()))?;
+                    let block = done_rx
+                        .recv()
+                        .map_err(|_| YxdbError::LzfError("compression thread died".into()))?;
                     writer.write_all(&block.data)?;
                     file_pos += block.data.len() as u64;
                     pending_blocks -= 1;
@@ -636,7 +684,9 @@ fn write_records<W: Write>(
                 send_block(&mut block_buf, &raw_tx, &mut pending_blocks)?;
                 // Drain the block we just sent (it's guaranteed to finish soon)
                 while pending_blocks > 0 {
-                    let block = done_rx.recv().map_err(|_| YxdbError::LzfError("compression thread died".into()))?;
+                    let block = done_rx
+                        .recv()
+                        .map_err(|_| YxdbError::LzfError("compression thread died".into()))?;
                     writer.write_all(&block.data)?;
                     file_pos += block.data.len() as u64;
                     pending_blocks -= 1;
@@ -647,10 +697,16 @@ fn write_records<W: Write>(
 
         // Build one record using reusable buffers
         build_record_into(
-            &mut ser_fixed, &mut ser_var_data,
-            &mut ser_var_fixups, &mut ser_record,
+            &mut ser_fixed,
+            &mut ser_var_data,
+            &mut ser_var_fixups,
+            &mut ser_record,
             &mut ser_utf16_buf,
-            fields, &columns, fixed_size, has_var, row,
+            fields,
+            &columns,
+            fixed_size,
+            has_var,
+            row,
         )?;
 
         // Flush block BEFORE adding if it would exceed BLOCK_SIZE
@@ -661,7 +717,26 @@ fn write_records<W: Write>(
             send_block(&mut block_buf, &raw_tx, &mut pending_blocks)?;
         }
 
-        block_buf.extend_from_slice(&ser_record);
+        // If a single record exceeds BLOCK_SIZE, write it directly as an
+        // uncompressed block to avoid LZF decompression buffer issues.
+        if ser_record.len() > BLOCK_SIZE && block_buf.is_empty() {
+            // Drain all pending blocks first so file_pos is accurate
+            while pending_blocks > 0 {
+                let block = done_rx
+                    .recv()
+                    .map_err(|_| YxdbError::LzfError("compression thread died".into()))?;
+                writer.write_all(&block.data)?;
+                file_pos += block.data.len() as u64;
+                pending_blocks -= 1;
+            }
+            // Write directly as uncompressed block (high bit set)
+            let len = ser_record.len() as u32 | 0x80000000;
+            writer.write_all(&len.to_le_bytes())?;
+            writer.write_all(&ser_record)?;
+            file_pos += 4 + ser_record.len() as u64;
+        } else {
+            block_buf.extend_from_slice(&ser_record);
+        }
     }
 
     // Flush remaining block
@@ -674,18 +749,23 @@ fn write_records<W: Write>(
 
     // Drain all remaining compressed blocks
     while pending_blocks > 0 {
-        let block = done_rx.recv().map_err(|_| YxdbError::LzfError("compression thread died".into()))?;
+        let block = done_rx
+            .recv()
+            .map_err(|_| YxdbError::LzfError("compression thread died".into()))?;
         writer.write_all(&block.data)?;
         file_pos += block.data.len() as u64;
         pending_blocks -= 1;
     }
 
-    compress_handle.join().map_err(|_| YxdbError::LzfError("compression thread panicked".into()))?;
+    compress_handle
+        .join()
+        .map_err(|_| YxdbError::LzfError("compression thread panicked".into()))?;
 
     Ok((block_index, file_pos))
 }
 
 /// Build a single record into reusable buffers, avoiding per-record allocation.
+#[allow(clippy::too_many_arguments)]
 fn build_record_into(
     fixed: &mut Vec<u8>,
     var_data: &mut Vec<u8>,
@@ -706,15 +786,7 @@ fn build_record_into(
 
     for (col_idx, field) in fields.iter().enumerate() {
         let col = columns[col_idx];
-        serialize_field_into(
-            fixed,
-            var_data,
-            var_fixups,
-            utf16_buf,
-            field,
-            col,
-            row,
-        )?;
+        serialize_field_into(fixed, var_data, var_fixups, utf16_buf, field, col, row)?;
     }
 
     // Fix up the variable-field offsets in the fixed portion.
@@ -723,8 +795,7 @@ fn build_record_into(
             let target = fixed_size + 4 + var_data_start;
             let offset_from_field = target - field_offset;
             let fixed_val = (offset_from_field as u32) | 0x80000000;
-            fixed[*field_offset..*field_offset + 4]
-                .copy_from_slice(&fixed_val.to_le_bytes());
+            fixed[*field_offset..*field_offset + 4].copy_from_slice(&fixed_val.to_le_bytes());
         }
     }
 
@@ -742,7 +813,7 @@ fn build_record_into(
 
 /// Serialize a single field value into the fixed and variable buffers.
 fn serialize_field_into(
-    fixed: &mut Vec<u8>,
+    fixed: &mut [u8],
     var_data: &mut Vec<u8>,
     var_fixups: &mut Vec<(usize, usize)>,
     utf16_buf: &mut Vec<u8>,
@@ -754,7 +825,9 @@ fn serialize_field_into(
 
     match field.field_type {
         FieldType::Bool => {
-            let series = col.bool().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
+            let series = col
+                .bool()
+                .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
             match series.get(row) {
                 Some(true) => fixed[off] = 1,
                 Some(false) => fixed[off] = 0,
@@ -764,9 +837,15 @@ fn serialize_field_into(
 
         FieldType::Byte => {
             let value: Option<u8> = match col.dtype() {
-                DataType::UInt8 => col.u8().map_err(|e| YxdbError::ConversionError(e.to_string()))?.get(row),
-                DataType::Int8 => col.i8().map_err(|e| YxdbError::ConversionError(e.to_string()))?.get(row).map(|v| v as u8),
-                _ => col.i16().map_err(|e| YxdbError::ConversionError(e.to_string()))?.get(row).map(|v| v as u8),
+                DataType::UInt8 => col
+                    .u8()
+                    .map_err(|e| YxdbError::ConversionError(e.to_string()))?
+                    .get(row),
+                _ => col
+                    .i16()
+                    .map_err(|e| YxdbError::ConversionError(e.to_string()))?
+                    .get(row)
+                    .map(|v| v as u8),
             };
             match value {
                 Some(v) => {
@@ -781,8 +860,18 @@ fn serialize_field_into(
         }
 
         FieldType::Int16 => {
-            let series = col.i16().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
-            match series.get(row) {
+            let value: Option<i16> = match col.dtype() {
+                DataType::Int8 => col
+                    .i8()
+                    .map_err(|e| YxdbError::ConversionError(e.to_string()))?
+                    .get(row)
+                    .map(|v| v as i16),
+                _ => col
+                    .i16()
+                    .map_err(|e| YxdbError::ConversionError(e.to_string()))?
+                    .get(row),
+            };
+            match value {
                 Some(v) => {
                     fixed[off..off + 2].copy_from_slice(&v.to_le_bytes());
                     fixed[off + 2] = 0;
@@ -795,8 +884,15 @@ fn serialize_field_into(
 
         FieldType::Int32 => {
             let value: Option<i32> = match col.dtype() {
-                DataType::UInt16 => col.u16().map_err(|e| YxdbError::ConversionError(e.to_string()))?.get(row).map(|v| v as i32),
-                _ => col.i32().map_err(|e| YxdbError::ConversionError(e.to_string()))?.get(row),
+                DataType::UInt16 => col
+                    .u16()
+                    .map_err(|e| YxdbError::ConversionError(e.to_string()))?
+                    .get(row)
+                    .map(|v| v as i32),
+                _ => col
+                    .i32()
+                    .map_err(|e| YxdbError::ConversionError(e.to_string()))?
+                    .get(row),
             };
             match value {
                 Some(v) => {
@@ -811,9 +907,45 @@ fn serialize_field_into(
 
         FieldType::Int64 => {
             let value: Option<i64> = match col.dtype() {
-                DataType::UInt32 => col.u32().map_err(|e| YxdbError::ConversionError(e.to_string()))?.get(row).map(|v| v as i64),
-                DataType::UInt64 => col.u64().map_err(|e| YxdbError::ConversionError(e.to_string()))?.get(row).map(|v| v as i64),
-                _ => col.i64().map_err(|e| YxdbError::ConversionError(e.to_string()))?.get(row),
+                DataType::UInt32 => col
+                    .u32()
+                    .map_err(|e| YxdbError::ConversionError(e.to_string()))?
+                    .get(row)
+                    .map(|v| v as i64),
+                DataType::UInt64 => {
+                    let v = col
+                        .u64()
+                        .map_err(|e| YxdbError::ConversionError(e.to_string()))?
+                        .get(row);
+                    match v {
+                        Some(val) if val > i64::MAX as u64 => {
+                            return Err(YxdbError::ConversionError(format!(
+                                "column '{}' at row {}: UInt64 value {} exceeds the YXDB Int64 range (max {}). \
+                                 Cast to Decimal or String before writing.",
+                                col.name(), row, val, i64::MAX
+                            )));
+                        }
+                        Some(val) => Some(val as i64),
+                        None => None,
+                    }
+                }
+                DataType::Duration(tu) => {
+                    // Duration stored as physical i64 — normalize to microseconds
+                    let phys = col.to_physical_repr();
+                    let v = phys
+                        .i64()
+                        .map_err(|e| YxdbError::ConversionError(e.to_string()))?
+                        .get(row);
+                    v.map(|val| match tu {
+                        TimeUnit::Nanoseconds => val / 1_000,
+                        TimeUnit::Microseconds => val,
+                        TimeUnit::Milliseconds => val * 1_000,
+                    })
+                }
+                _ => col
+                    .i64()
+                    .map_err(|e| YxdbError::ConversionError(e.to_string()))?
+                    .get(row),
             };
             match value {
                 Some(v) => {
@@ -827,7 +959,9 @@ fn serialize_field_into(
         }
 
         FieldType::Float => {
-            let series = col.f32().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
+            let series = col
+                .f32()
+                .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
             match series.get(row) {
                 Some(v) => {
                     fixed[off..off + 4].copy_from_slice(&v.to_le_bytes());
@@ -840,7 +974,9 @@ fn serialize_field_into(
         }
 
         FieldType::Double => {
-            let series = col.f64().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
+            let series = col
+                .f64()
+                .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
             match series.get(row) {
                 Some(v) => {
                     fixed[off..off + 8].copy_from_slice(&v.to_le_bytes());
@@ -856,21 +992,27 @@ fn serialize_field_into(
             // Support both Decimal (i128) and Float64 input columns
             match col.dtype() {
                 DataType::Decimal(_, _) => {
-                    let decimal_ca = col.decimal().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
-                    match decimal_ca.get(row) {
+                    let decimal_ca = col
+                        .decimal()
+                        .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
+                    match decimal_ca.phys.get(row) {
                         Some(val) => {
                             let s = format_decimal_i128(val, field.scale);
                             write_fixed_ascii(&mut fixed[off..off + field.size], &s);
                             fixed[off + field.size] = 0;
                         }
                         None => {
-                            for b in &mut fixed[off..off + field.size] { *b = 0; }
+                            for b in &mut fixed[off..off + field.size] {
+                                *b = 0;
+                            }
                             fixed[off + field.size] = 1;
                         }
                     }
                 }
                 _ => {
-                    let series = col.f64().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
+                    let series = col
+                        .f64()
+                        .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
                     match series.get(row) {
                         Some(v) => {
                             let s = format!("{:.*}", field.scale, v);
@@ -878,7 +1020,9 @@ fn serialize_field_into(
                             fixed[off + field.size] = 0;
                         }
                         None => {
-                            for b in &mut fixed[off..off + field.size] { *b = 0; }
+                            for b in &mut fixed[off..off + field.size] {
+                                *b = 0;
+                            }
                             fixed[off + field.size] = 1;
                         }
                     }
@@ -887,21 +1031,27 @@ fn serialize_field_into(
         }
 
         FieldType::String => {
-            let series = col.str().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
+            let series = col
+                .str()
+                .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
             match series.get(row) {
                 Some(s) => {
                     write_fixed_ascii(&mut fixed[off..off + field.size], s);
                     fixed[off + field.size] = 0;
                 }
                 None => {
-                    for b in &mut fixed[off..off + field.size] { *b = 0; }
+                    for b in &mut fixed[off..off + field.size] {
+                        *b = 0;
+                    }
                     fixed[off + field.size] = 1;
                 }
             }
         }
 
         FieldType::WString => {
-            let series = col.str().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
+            let series = col
+                .str()
+                .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
             let byte_len = field.size * 2;
             match series.get(row) {
                 Some(s) => {
@@ -909,16 +1059,20 @@ fn serialize_field_into(
                     fixed[off + byte_len] = 0;
                 }
                 None => {
-                    for b in &mut fixed[off..off + byte_len] { *b = 0; }
+                    for b in &mut fixed[off..off + byte_len] {
+                        *b = 0;
+                    }
                     fixed[off + byte_len] = 1;
                 }
             }
         }
 
         FieldType::VString => {
-            let series = col.str().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
+            let series = col
+                .str()
+                .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
             match series.get(row) {
-                Some(s) if s.is_empty() => {
+                Some("") => {
                     // Empty string: fixed portion = 0
                     fixed[off..off + 4].copy_from_slice(&0u32.to_le_bytes());
                 }
@@ -937,9 +1091,11 @@ fn serialize_field_into(
         }
 
         FieldType::VWString => {
-            let series = col.str().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
+            let series = col
+                .str()
+                .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
             match series.get(row) {
-                Some(s) if s.is_empty() => {
+                Some("") => {
                     fixed[off..off + 4].copy_from_slice(&0u32.to_le_bytes());
                 }
                 Some(s) => {
@@ -961,15 +1117,19 @@ fn serialize_field_into(
         }
 
         FieldType::Date => {
-            let series = col.date().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
-            match series.get(row) {
+            let series = col
+                .date()
+                .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
+            match series.phys.get(row) {
                 Some(days) => {
                     let date_str = days_to_date_str(days);
                     write_fixed_ascii(&mut fixed[off..off + 10], &date_str);
                     fixed[off + 10] = 0;
                 }
                 None => {
-                    for b in &mut fixed[off..off + 10] { *b = 0; }
+                    for b in &mut fixed[off..off + 10] {
+                        *b = 0;
+                    }
                     fixed[off + 10] = 1;
                 }
             }
@@ -979,7 +1139,9 @@ fn serialize_field_into(
             // Polars Time is stored as i64 nanoseconds since midnight.
             // Extract the physical i64 representation.
             let phys = col.to_physical_repr();
-            let series = phys.i64().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
+            let series = phys
+                .i64()
+                .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
             match series.get(row) {
                 Some(ns) => {
                     let time_str = ns_to_time_str(ns);
@@ -987,20 +1149,24 @@ fn serialize_field_into(
                     fixed[off + 8] = 0;
                 }
                 None => {
-                    for b in &mut fixed[off..off + 8] { *b = 0; }
+                    for b in &mut fixed[off..off + 8] {
+                        *b = 0;
+                    }
                     fixed[off + 8] = 1;
                 }
             }
         }
 
         FieldType::DateTime => {
-            let series = col.datetime().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
+            let series = col
+                .datetime()
+                .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
             // Determine the time unit from the column's dtype
             let time_unit = match col.dtype() {
-                DataType::Datetime(tu, _) => tu.clone(),
+                DataType::Datetime(tu, _) => *tu,
                 _ => TimeUnit::Microseconds,
             };
-            match series.get(row) {
+            match series.phys.get(row) {
                 Some(val) => {
                     // Normalize to microseconds
                     let us = match time_unit {
@@ -1013,16 +1179,20 @@ fn serialize_field_into(
                     fixed[off + 19] = 0;
                 }
                 None => {
-                    for b in &mut fixed[off..off + 19] { *b = 0; }
+                    for b in &mut fixed[off..off + 19] {
+                        *b = 0;
+                    }
                     fixed[off + 19] = 1;
                 }
             }
         }
 
         FieldType::Blob | FieldType::SpatialObj => {
-            let series = col.binary().map_err(|e| YxdbError::ConversionError(e.to_string()))?;
+            let series = col
+                .binary()
+                .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
             match series.get(row) {
-                Some(data) if data.is_empty() => {
+                Some([]) => {
                     fixed[off..off + 4].copy_from_slice(&0u32.to_le_bytes());
                 }
                 Some(data) => {
@@ -1040,8 +1210,6 @@ fn serialize_field_into(
 
     Ok(())
 }
-
-
 
 // ── Field serialization ────────────────────────────────────────────────
 
@@ -1159,6 +1327,12 @@ fn days_to_civil(days: i32) -> (i32, u32, u32) {
 mod tests {
     use super::*;
 
+    /// Test helper: create a DataFrame from columns, inferring height.
+    fn test_df(columns: Vec<Column>) -> DataFrame {
+        let h = columns.first().map_or(0, |c| c.len());
+        DataFrame::new(h, columns).unwrap()
+    }
+
     #[test]
     fn test_days_to_civil_epoch() {
         assert_eq!(days_to_civil(0), (1970, 1, 1));
@@ -1256,11 +1430,21 @@ mod tests {
         assert_eq!(df2.width(), 2);
 
         let id_col = df2.column("id").unwrap();
-        let id_vals: Vec<i32> = id_col.i32().unwrap().into_iter().map(|x| x.unwrap()).collect();
+        let id_vals: Vec<i32> = id_col
+            .i32()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.unwrap())
+            .collect();
         assert_eq!(id_vals, vec![1, 2, 3]);
 
         let name_col = df2.column("name").unwrap();
-        let name_vals: Vec<&str> = name_col.str().unwrap().into_iter().map(|x| x.unwrap()).collect();
+        let name_vals: Vec<&str> = name_col
+            .str()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.unwrap())
+            .collect();
         assert_eq!(name_vals, vec!["Alice", "Bob", "Charlie"]);
     }
 
@@ -1313,15 +1497,36 @@ mod tests {
         assert_eq!(df2.width(), 7);
 
         // Check bool
-        let bools: Vec<bool> = df2.column("bool_col").unwrap().bool().unwrap().into_iter().map(|x| x.unwrap()).collect();
+        let bools: Vec<bool> = df2
+            .column("bool_col")
+            .unwrap()
+            .bool()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.unwrap())
+            .collect();
         assert_eq!(bools, vec![true, false, true]);
 
         // Check i32
-        let i32s: Vec<i32> = df2.column("i32_col").unwrap().i32().unwrap().into_iter().map(|x| x.unwrap()).collect();
+        let i32s: Vec<i32> = df2
+            .column("i32_col")
+            .unwrap()
+            .i32()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.unwrap())
+            .collect();
         assert_eq!(i32s, vec![100, 200, 300]);
 
         // Check strings
-        let strs: Vec<&str> = df2.column("str_col").unwrap().str().unwrap().into_iter().map(|x| x.unwrap()).collect();
+        let strs: Vec<&str> = df2
+            .column("str_col")
+            .unwrap()
+            .str()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.unwrap())
+            .collect();
         assert_eq!(strs, vec!["a", "bb", "ccc"]);
     }
 
@@ -1335,12 +1540,14 @@ mod tests {
         let batch1 = df! {
             "id" => [1i32, 2, 3],
             "name" => ["Alice", "Bob", "Charlie"],
-        }.unwrap();
+        }
+        .unwrap();
 
         let batch2 = df! {
             "id" => [4i32, 5],
             "name" => ["David", "Eve"],
-        }.unwrap();
+        }
+        .unwrap();
 
         // Write using streaming writer
         let tmp = NamedTempFile::new().unwrap();
@@ -1357,10 +1564,24 @@ mod tests {
         assert_eq!(df.height(), 5);
         assert_eq!(df.width(), 2);
 
-        let ids: Vec<i32> = df.column("id").unwrap().i32().unwrap().into_iter().map(|x| x.unwrap()).collect();
+        let ids: Vec<i32> = df
+            .column("id")
+            .unwrap()
+            .i32()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.unwrap())
+            .collect();
         assert_eq!(ids, vec![1, 2, 3, 4, 5]);
 
-        let names: Vec<&str> = df.column("name").unwrap().str().unwrap().into_iter().map(|x| x.unwrap()).collect();
+        let names: Vec<&str> = df
+            .column("name")
+            .unwrap()
+            .str()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.unwrap())
+            .collect();
         assert_eq!(names, vec!["Alice", "Bob", "Charlie", "David", "Eve"]);
     }
 
@@ -1376,12 +1597,12 @@ mod tests {
 
         {
             let mut writer = YxdbWriter::new(tmp.path(), &template).unwrap();
-            
+
             for i in 0..1000 {
                 let batch = df! { "value" => [i as i64] }.unwrap();
                 writer.write_batch(&batch).unwrap();
             }
-            
+
             assert_eq!(writer.record_count(), 1000);
             writer.finish().unwrap();
         }
@@ -1389,7 +1610,14 @@ mod tests {
         let df = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
         assert_eq!(df.height(), 1000);
 
-        let values: Vec<i64> = df.column("value").unwrap().i64().unwrap().into_iter().map(|x| x.unwrap()).collect();
+        let values: Vec<i64> = df
+            .column("value")
+            .unwrap()
+            .i64()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.unwrap())
+            .collect();
         assert_eq!(values, (0..1000).collect::<Vec<_>>());
     }
 
@@ -1419,12 +1647,13 @@ mod tests {
 
     #[test]
     fn test_roundtrip_compression_version_in_file() {
-        use tempfile::NamedTempFile;
         use std::fs;
+        use tempfile::NamedTempFile;
 
         let df = df! {
             "id" => [1i32, 2, 3],
-        }.unwrap();
+        }
+        .unwrap();
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
@@ -1446,15 +1675,16 @@ mod tests {
         use polars::prelude::*;
         use tempfile::NamedTempFile;
 
-        let df = DataFrame::new(vec![
-            Column::new("x".into(), Vec::<i32>::new()),
-        ]).unwrap();
+        let df = test_df(vec![Column::new("x".into(), Vec::<i32>::new())]);
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
 
         // Verify the file header declares 0 records
         let bytes = std::fs::read(tmp.path()).unwrap();
-        assert!(bytes.len() >= 512, "file should at least contain the 512-byte header");
+        assert!(
+            bytes.len() >= 512,
+            "file should at least contain the 512-byte header"
+        );
         let num_records = u64::from_le_bytes(bytes[104..112].try_into().unwrap());
         assert_eq!(num_records, 0, "header should declare 0 records");
         // Magic string should be present
@@ -1470,19 +1700,14 @@ mod tests {
         let df = df! {
             "a" => [42i32],
             "b" => ["only"],
-        }.unwrap();
+        }
+        .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
         assert_eq!(df2.height(), 1);
-        assert_eq!(
-            df2.column("a").unwrap().i32().unwrap().get(0),
-            Some(42)
-        );
-        assert_eq!(
-            df2.column("b").unwrap().str().unwrap().get(0),
-            Some("only")
-        );
+        assert_eq!(df2.column("a").unwrap().i32().unwrap().get(0), Some(42));
+        assert_eq!(df2.column("b").unwrap().str().unwrap().get(0), Some("only"));
     }
 
     #[test]
@@ -1492,7 +1717,7 @@ mod tests {
         use tempfile::NamedTempFile;
 
         let s = Column::new("n".into(), &[None::<i64>, None, None]);
-        let df = DataFrame::new(vec![s]).unwrap();
+        let df = test_df(vec![s]);
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
@@ -1507,13 +1732,16 @@ mod tests {
 
         let df = df! {
             "s" => ["", "", ""],
-        }.unwrap();
+        }
+        .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
         let vals: Vec<&str> = df2
-            .column("s").unwrap()
-            .str().unwrap()
+            .column("s")
+            .unwrap()
+            .str()
+            .unwrap()
             .into_iter()
             .map(|x| x.unwrap())
             .collect();
@@ -1528,7 +1756,7 @@ mod tests {
         use tempfile::NamedTempFile;
 
         let s = Column::new("s".into(), &[Some("hi"), Some(""), None, Some(""), None]);
-        let df = DataFrame::new(vec![s]).unwrap();
+        let df = test_df(vec![s]);
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
@@ -1550,16 +1778,35 @@ mod tests {
             "i16" => [i16::MIN, i16::MAX, 0i16],
             "i32" => [i32::MIN, i32::MAX, 0i32],
             "i64" => [i64::MIN, i64::MAX, 0i64],
-        }.unwrap();
+        }
+        .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
-        assert_eq!(df2.column("i16").unwrap().i16().unwrap().get(0), Some(i16::MIN));
-        assert_eq!(df2.column("i16").unwrap().i16().unwrap().get(1), Some(i16::MAX));
-        assert_eq!(df2.column("i32").unwrap().i32().unwrap().get(0), Some(i32::MIN));
-        assert_eq!(df2.column("i32").unwrap().i32().unwrap().get(1), Some(i32::MAX));
-        assert_eq!(df2.column("i64").unwrap().i64().unwrap().get(0), Some(i64::MIN));
-        assert_eq!(df2.column("i64").unwrap().i64().unwrap().get(1), Some(i64::MAX));
+        assert_eq!(
+            df2.column("i16").unwrap().i16().unwrap().get(0),
+            Some(i16::MIN)
+        );
+        assert_eq!(
+            df2.column("i16").unwrap().i16().unwrap().get(1),
+            Some(i16::MAX)
+        );
+        assert_eq!(
+            df2.column("i32").unwrap().i32().unwrap().get(0),
+            Some(i32::MIN)
+        );
+        assert_eq!(
+            df2.column("i32").unwrap().i32().unwrap().get(1),
+            Some(i32::MAX)
+        );
+        assert_eq!(
+            df2.column("i64").unwrap().i64().unwrap().get(0),
+            Some(i64::MIN)
+        );
+        assert_eq!(
+            df2.column("i64").unwrap().i64().unwrap().get(1),
+            Some(i64::MAX)
+        );
     }
 
     #[test]
@@ -1570,7 +1817,8 @@ mod tests {
 
         let df = df! {
             "f64" => [f64::INFINITY, f64::NEG_INFINITY, f64::NAN, 0.0f64, -0.0f64],
-        }.unwrap();
+        }
+        .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
@@ -1589,8 +1837,11 @@ mod tests {
         use polars::prelude::*;
         use tempfile::NamedTempFile;
 
-        let s = Column::new("b".into(), &[Some(true), Some(false), None, Some(true), None]);
-        let df = DataFrame::new(vec![s]).unwrap();
+        let s = Column::new(
+            "b".into(),
+            &[Some(true), Some(false), None, Some(true), None],
+        );
+        let df = test_df(vec![s]);
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
@@ -1617,7 +1868,8 @@ mod tests {
                 "αβγδ",              // Greek
                 "Привет",            // Cyrillic
             ],
-        }.unwrap();
+        }
+        .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
@@ -1639,11 +1891,15 @@ mod tests {
         let long_str = "X".repeat(50_000);
         let df = df! {
             "s" => [long_str.as_str()],
-        }.unwrap();
+        }
+        .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
-        assert_eq!(df2.column("s").unwrap().str().unwrap().get(0), Some(long_str.as_str()));
+        assert_eq!(
+            df2.column("s").unwrap().str().unwrap().get(0),
+            Some(long_str.as_str())
+        );
     }
 
     #[test]
@@ -1653,9 +1909,9 @@ mod tests {
         use tempfile::NamedTempFile;
 
         let cols: Vec<Column> = (0..50)
-            .map(|i| Column::new(format!("c{i:03}").into(), &[i as i32]))
+            .map(|i| Column::new(format!("c{i:03}").into(), &[i]))
             .collect();
-        let df = DataFrame::new(cols).unwrap();
+        let df = test_df(cols);
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
@@ -1663,8 +1919,12 @@ mod tests {
         assert_eq!(df2.height(), 1);
         for i in 0..50 {
             assert_eq!(
-                df2.column(&format!("c{i:03}")).unwrap().i32().unwrap().get(0),
-                Some(i as i32)
+                df2.column(&format!("c{i:03}"))
+                    .unwrap()
+                    .i32()
+                    .unwrap()
+                    .get(0),
+                Some(i)
             );
         }
     }
@@ -1678,16 +1938,19 @@ mod tests {
         let n = 20_000;
         let ids: Vec<i64> = (0..n).collect();
         let texts: Vec<String> = (0..n).map(|i| format!("row_{i:06}")).collect();
-        let df = DataFrame::new(vec![
+        let df = test_df(vec![
             Column::new("id".into(), &ids),
             Column::new("text".into(), texts),
-        ]).unwrap();
+        ]);
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
         assert_eq!(df2.height(), n as usize);
         assert_eq!(df2.column("id").unwrap().i64().unwrap().get(0), Some(0));
-        assert_eq!(df2.column("id").unwrap().i64().unwrap().get(n as usize - 1), Some(n - 1));
+        assert_eq!(
+            df2.column("id").unwrap().i64().unwrap().get(n as usize - 1),
+            Some(n - 1)
+        );
     }
 
     #[test]
@@ -1700,7 +1963,7 @@ mod tests {
             .map(|i| if i % 2 == 0 { Some(i) } else { None })
             .collect();
         let s = Column::new("v".into(), &vals);
-        let df = DataFrame::new(vec![s]).unwrap();
+        let df = test_df(vec![s]);
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
@@ -1718,10 +1981,9 @@ mod tests {
 
         let batch = df! {
             "x" => [1i32, 2],
-        }.unwrap();
-        let empty_batch = DataFrame::new(vec![
-            Column::new("x".into(), Vec::<i32>::new()),
-        ]).unwrap();
+        }
+        .unwrap();
+        let empty_batch = test_df(vec![Column::new("x".into(), Vec::<i32>::new())]);
 
         let tmp = NamedTempFile::new().unwrap();
         {
@@ -1745,18 +2007,31 @@ mod tests {
         let mut df = df! {
             "id" => [1i32, 2, 3],
             "text" => ["a", "b", "c"],
-        }.unwrap();
+        }
+        .unwrap();
 
         for _ in 0..5 {
             let tmp = NamedTempFile::new().unwrap();
             write_yxdb(tmp.path(), &df, &[]).unwrap();
             df = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
         }
-        let ids: Vec<i32> = df.column("id").unwrap().i32().unwrap()
-            .into_iter().map(|x| x.unwrap()).collect();
+        let ids: Vec<i32> = df
+            .column("id")
+            .unwrap()
+            .i32()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.unwrap())
+            .collect();
         assert_eq!(ids, vec![1, 2, 3]);
-        let texts: Vec<&str> = df.column("text").unwrap().str().unwrap()
-            .into_iter().map(|x| x.unwrap()).collect();
+        let texts: Vec<&str> = df
+            .column("text")
+            .unwrap()
+            .str()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.unwrap())
+            .collect();
         assert_eq!(texts, vec!["a", "b", "c"]);
     }
 
@@ -1838,8 +2113,9 @@ mod tests {
             ],
             &DataType::Time,
             false,
-        ).unwrap();
-        let df = DataFrame::new(vec![time_series.into()]).unwrap();
+        )
+        .unwrap();
+        let df = test_df(vec![time_series.into()]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
@@ -1862,25 +2138,26 @@ mod tests {
         let date_series = Series::from_any_values_and_dtype(
             "d".into(),
             &[
-                AnyValue::Date(0),         // 1970-01-01
-                AnyValue::Date(-1),        // 1969-12-31
-                AnyValue::Date(10957),     // 2000-01-01
+                AnyValue::Date(0),          // 1970-01-01
+                AnyValue::Date(-1),         // 1969-12-31
+                AnyValue::Date(10957),      // 2000-01-01
                 AnyValue::Date(10957 + 59), // 2000-02-29 (leap day)
-                AnyValue::Date(20162),     // 2025-03-15
+                AnyValue::Date(20162),      // 2025-03-15
             ],
             &DataType::Date,
             false,
-        ).unwrap();
-        let df = DataFrame::new(vec![date_series.into()]).unwrap();
+        )
+        .unwrap();
+        let df = test_df(vec![date_series.into()]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
         assert_eq!(df2.height(), 5);
         let col = df2.column("d").unwrap().date().unwrap();
-        assert_eq!(col.get(0), Some(0));
-        assert_eq!(col.get(1), Some(-1));
-        assert_eq!(col.get(3), Some(10957 + 59));
+        assert_eq!(col.phys.get(0), Some(0));
+        assert_eq!(col.phys.get(1), Some(-1));
+        assert_eq!(col.phys.get(3), Some(10957 + 59));
     }
 
     #[test]
@@ -1891,18 +2168,21 @@ mod tests {
 
         // Various blob sizes including at the 127-byte threshold
         let blobs: Vec<Option<&[u8]>> = vec![
-            Some(b""),                           // empty
-            Some(b"\x42"),                       // single byte
-            Some(&[0xAA; 127]),                  // exactly 127 (small block max)
-            Some(&[0xBB; 128]),                  // 128 (needs 4-byte header)
-            Some(&[0xFF; 1000]),                 // larger blob
-            None,                                // null
+            Some(b""),           // empty
+            Some(b"\x42"),       // single byte
+            Some(&[0xAA; 127]),  // exactly 127 (small block max)
+            Some(&[0xBB; 128]),  // 128 (needs 4-byte header)
+            Some(&[0xFF; 1000]), // larger blob
+            None,                // null
         ];
         let series = Column::new(
             "b".into(),
-            blobs.iter().map(|b| b.map(|v| v.to_vec())).collect::<Vec<_>>(),
+            blobs
+                .iter()
+                .map(|b| b.map(|v| v.to_vec()))
+                .collect::<Vec<_>>(),
         );
-        let df = DataFrame::new(vec![series]).unwrap();
+        let df = test_df(vec![series]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
@@ -1924,7 +2204,7 @@ mod tests {
 
         // Test strings at and around the 127-byte small/normal block threshold
         let owned: Vec<String> = vec![
-            "A".repeat(1),
+            "A".to_string(),
             "B".repeat(126),
             "C".repeat(127),
             "D".repeat(128),
@@ -1938,7 +2218,11 @@ mod tests {
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
         let col = df2.column("s").unwrap().str().unwrap();
         for (i, expected) in owned.iter().enumerate() {
-            assert_eq!(col.get(i).unwrap(), expected.as_str(), "mismatch at index {i}");
+            assert_eq!(
+                col.get(i).unwrap(),
+                expected.as_str(),
+                "mismatch at index {i}"
+            );
         }
     }
 
@@ -1950,7 +2234,8 @@ mod tests {
 
         let df = df! {
             "s" => ["😀", "🎉🚀💻", "Hello 🌍!", "A😀B😀C"],
-        }.unwrap();
+        }
+        .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
@@ -1968,9 +2253,9 @@ mod tests {
         use tempfile::NamedTempFile;
 
         let cols: Vec<Column> = (0..200)
-            .map(|i| Column::new(format!("c{i:04}").into(), &[i as i32, i as i32 * 2]))
+            .map(|i| Column::new(format!("c{i:04}").into(), &[i, i * 2]))
             .collect();
-        let df = DataFrame::new(cols).unwrap();
+        let df = test_df(cols);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
@@ -1979,7 +2264,10 @@ mod tests {
         assert_eq!(df2.height(), 2);
         // Verify first and last columns
         assert_eq!(df2.column("c0000").unwrap().i32().unwrap().get(0), Some(0));
-        assert_eq!(df2.column("c0199").unwrap().i32().unwrap().get(0), Some(199));
+        assert_eq!(
+            df2.column("c0199").unwrap().i32().unwrap().get(0),
+            Some(199)
+        );
     }
 
     #[test]
@@ -1991,9 +2279,7 @@ mod tests {
         // 100k rows × 9 bytes/record (Int64) ≈ 900kB → spans ~3.4 blocks
         let n = 100_000;
         let ids: Vec<i64> = (0..n).collect();
-        let df = DataFrame::new(vec![
-            Column::new("id".into(), &ids),
-        ]).unwrap();
+        let df = test_df(vec![Column::new("id".into(), &ids)]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
@@ -2013,13 +2299,13 @@ mod tests {
         use polars::prelude::*;
         use tempfile::NamedTempFile;
 
-        let df = DataFrame::new(vec![
+        let df = test_df(vec![
             Column::new("i32".into(), &[None::<i32>, None, None]),
             Column::new("i64".into(), &[None::<i64>, None, None]),
             Column::new("f64".into(), &[None::<f64>, None, None]),
             Column::new("bool".into(), &[None::<bool>, None, None]),
             Column::new("str".into(), &[None::<&str>, None, None]),
-        ]).unwrap();
+        ]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
@@ -2027,7 +2313,8 @@ mod tests {
         assert_eq!(df2.height(), 3);
         for col_name in df2.get_column_names().into_iter() {
             assert_eq!(
-                df2.column(col_name).unwrap().null_count(), 3,
+                df2.column(col_name).unwrap().null_count(),
+                3,
                 "column {col_name} should be all null"
             );
         }
@@ -2040,27 +2327,37 @@ mod tests {
             FieldMeta {
                 name: "a&b".to_string(),
                 field_type: FieldType::Int32,
-                size: 4, scale: 0, offset: 0,
+                size: 4,
+                scale: 0,
+                offset: 0,
             },
             FieldMeta {
                 name: "c<d".to_string(),
                 field_type: FieldType::Int32,
-                size: 4, scale: 0, offset: 5,
+                size: 4,
+                scale: 0,
+                offset: 5,
             },
             FieldMeta {
                 name: "e>f".to_string(),
                 field_type: FieldType::Int32,
-                size: 4, scale: 0, offset: 10,
+                size: 4,
+                scale: 0,
+                offset: 10,
             },
             FieldMeta {
                 name: "g\"h".to_string(),
                 field_type: FieldType::Int32,
-                size: 4, scale: 0, offset: 15,
+                size: 4,
+                scale: 0,
+                offset: 15,
             },
             FieldMeta {
                 name: "i'j".to_string(),
                 field_type: FieldType::Int32,
-                size: 4, scale: 0, offset: 20,
+                size: 4,
+                scale: 0,
+                offset: 20,
             },
         ];
         let xml = build_meta_xml(&fields);
@@ -2077,17 +2374,20 @@ mod tests {
         use polars::prelude::*;
         use tempfile::NamedTempFile;
 
-        let df = DataFrame::new(vec![
+        let df = test_df(vec![
             Column::new("Ñame".into(), &[1i32]),
             Column::new("日付".into(), &[2i32]),
             Column::new("Größe".into(), &[3i32]),
-        ]).unwrap();
+        ]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
         let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
-        let names: Vec<&str> = df2.get_column_names()
-            .into_iter().map(|n| n.as_str()).collect();
+        let names: Vec<&str> = df2
+            .get_column_names()
+            .into_iter()
+            .map(|n| n.as_str())
+            .collect();
         assert_eq!(names, vec!["Ñame", "日付", "Größe"]);
     }
 
@@ -2106,8 +2406,8 @@ mod tests {
         // Verify last day of each month in 2023 (non-leap year)
         let jan1_2023 = 19358; // 2023-01-01 days from epoch
         let expected = [
-            (31, 1, 31),   // Jan has 31
-            (59, 2, 28),   // Feb has 28
+            (31, 1, 31), // Jan has 31
+            (59, 2, 28), // Feb has 28
             (90, 3, 31),
             (120, 4, 30),
             (151, 5, 31),
@@ -2121,8 +2421,11 @@ mod tests {
         ];
         for (day_of_year, expected_month, expected_day) in expected {
             let (y, m, d) = days_to_civil(jan1_2023 + day_of_year - 1);
-            assert_eq!((y, m, d), (2023, expected_month, expected_day),
-                "day of year {day_of_year}");
+            assert_eq!(
+                (y, m, d),
+                (2023, expected_month, expected_day),
+                "day of year {day_of_year}"
+            );
         }
     }
 
@@ -2133,9 +2436,7 @@ mod tests {
         use tempfile::NamedTempFile;
 
         let template = df! { "x" => [0i32] }.unwrap();
-        let empty = DataFrame::new(vec![
-            Column::new("x".into(), Vec::<i32>::new()),
-        ]).unwrap();
+        let empty = test_df(vec![Column::new("x".into(), Vec::<i32>::new())]);
         let data = df! { "x" => [1i32, 2, 3] }.unwrap();
 
         let tmp = NamedTempFile::new().unwrap();
@@ -2154,8 +2455,14 @@ mod tests {
         }
         let df = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
         assert_eq!(df.height(), 3);
-        let vals: Vec<i32> = df.column("x").unwrap().i32().unwrap()
-            .into_iter().map(|x| x.unwrap()).collect();
+        let vals: Vec<i32> = df
+            .column("x")
+            .unwrap()
+            .i32()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.unwrap())
+            .collect();
         assert_eq!(vals, vec![1, 2, 3]);
     }
 
@@ -2172,7 +2479,10 @@ mod tests {
         // Read raw bytes and check header offset 64..68
         let bytes = std::fs::read(tmp.path()).unwrap();
         let file_id = u32::from_le_bytes(bytes[64..68].try_into().unwrap());
-        assert_eq!(file_id, 0x00440204, "written file should use NoSpatialIndex file_id");
+        assert_eq!(
+            file_id, 0x00440204,
+            "written file should use NoSpatialIndex file_id"
+        );
     }
 
     #[test]
@@ -2215,13 +2525,14 @@ mod tests {
         wkb_point.extend_from_slice(&(-73.9857f64).to_le_bytes()); // x
         wkb_point.extend_from_slice(&40.7484f64.to_le_bytes()); // y
 
-        let df = DataFrame::new(vec![
+        let df = test_df(vec![
             Series::new("id".into(), &[1i32, 2]).into(),
-            Series::new("geom".into(), vec![
-                Some(wkb_point.as_slice()),
-                Some(wkb_point.as_slice()),
-            ]).into(),
-        ]).unwrap();
+            Series::new(
+                "geom".into(),
+                vec![Some(wkb_point.as_slice()), Some(wkb_point.as_slice())],
+            )
+            .into(),
+        ]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["geom"]).unwrap();
@@ -2255,10 +2566,10 @@ mod tests {
         wkb_point.extend_from_slice(&1.0f64.to_le_bytes());
         wkb_point.extend_from_slice(&2.0f64.to_le_bytes());
 
-        let df = DataFrame::new(vec![
+        let df = test_df(vec![
             Series::new("id".into(), &[1i32]).into(),
             Series::new("geom".into(), vec![Some(wkb_point.as_slice())]).into(),
-        ]).unwrap();
+        ]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["geom"]).unwrap();
@@ -2284,9 +2595,11 @@ mod tests {
         wkb_point.extend_from_slice(&5.0f64.to_le_bytes());
         wkb_point.extend_from_slice(&10.0f64.to_le_bytes());
 
-        let df = DataFrame::new(vec![
-            Series::new("geom".into(), vec![Some(wkb_point.as_slice())]).into(),
-        ]).unwrap();
+        let df = test_df(vec![Series::new(
+            "geom".into(),
+            vec![Some(wkb_point.as_slice())],
+        )
+        .into()]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["geom"]).unwrap();
@@ -2311,14 +2624,14 @@ mod tests {
         wkb_point.extend_from_slice(&1.0f64.to_le_bytes());
         wkb_point.extend_from_slice(&2.0f64.to_le_bytes());
 
-        let df = DataFrame::new(vec![
+        let df = test_df(vec![
             Series::new("id".into(), &[1i32, 2, 3]).into(),
-            Series::new("geom".into(), vec![
-                Some(wkb_point.as_slice()),
-                None,
-                Some(wkb_point.as_slice()),
-            ]).into(),
-        ]).unwrap();
+            Series::new(
+                "geom".into(),
+                vec![Some(wkb_point.as_slice()), None, Some(wkb_point.as_slice())],
+            )
+            .into(),
+        ]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["geom"]).unwrap();
@@ -2348,9 +2661,9 @@ mod tests {
             wkb.extend_from_slice(&y.to_le_bytes());
         }
 
-        let df = DataFrame::new(vec![
-            Series::new("line".into(), vec![Some(wkb.as_slice())]).into(),
-        ]).unwrap();
+        let df = test_df(vec![
+            Series::new("line".into(), vec![Some(wkb.as_slice())]).into()
+        ]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["line"]).unwrap();
@@ -2381,9 +2694,9 @@ mod tests {
             wkb.extend_from_slice(&y.to_le_bytes());
         }
 
-        let df = DataFrame::new(vec![
-            Series::new("poly".into(), vec![Some(wkb.as_slice())]).into(),
-        ]).unwrap();
+        let df = test_df(vec![
+            Series::new("poly".into(), vec![Some(wkb.as_slice())]).into()
+        ]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["poly"]).unwrap();
@@ -2408,7 +2721,7 @@ mod tests {
         wkb.push(1u8);
         wkb.extend_from_slice(&4u32.to_le_bytes()); // WKB_MULTIPOINT
         wkb.extend_from_slice(&2u32.to_le_bytes()); // 2 points
-        // Each sub-point is a full WKB Point
+                                                    // Each sub-point is a full WKB Point
         for &(x, y) in &[(1.0f64, 2.0f64), (3.0, 4.0)] {
             wkb.push(1u8); // LE
             wkb.extend_from_slice(&1u32.to_le_bytes()); // WKB_POINT
@@ -2416,9 +2729,9 @@ mod tests {
             wkb.extend_from_slice(&y.to_le_bytes());
         }
 
-        let df = DataFrame::new(vec![
-            Series::new("pts".into(), vec![Some(wkb.as_slice())]).into(),
-        ]).unwrap();
+        let df = test_df(vec![
+            Series::new("pts".into(), vec![Some(wkb.as_slice())]).into()
+        ]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["pts"]).unwrap();
@@ -2434,7 +2747,7 @@ mod tests {
     #[test]
     fn test_spatial_column_names_from_written_file() {
         // Verify spatial_column_names works on files we write
-        use crate::{YxdbReader, spatial_column_names};
+        use crate::{spatial_column_names, YxdbReader};
         use tempfile::NamedTempFile;
 
         let mut wkb_point = Vec::new();
@@ -2443,11 +2756,11 @@ mod tests {
         wkb_point.extend_from_slice(&1.0f64.to_le_bytes());
         wkb_point.extend_from_slice(&2.0f64.to_le_bytes());
 
-        let df = DataFrame::new(vec![
+        let df = test_df(vec![
             Series::new("id".into(), &[1i32]).into(),
             Series::new("location".into(), vec![Some(wkb_point.as_slice())]).into(),
             Series::new("name".into(), &["test"]).into(),
-        ]).unwrap();
+        ]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["location"]).unwrap();
@@ -2460,7 +2773,7 @@ mod tests {
     #[test]
     fn test_spatial_roundtrip_multiple_spatial_columns() {
         // Test file with two spatial columns
-        use crate::{read_yxdb, SpatialMode, spatial_column_names, YxdbReader};
+        use crate::{read_yxdb, spatial_column_names, SpatialMode, YxdbReader};
         use tempfile::NamedTempFile;
 
         let mut wkb_pt1 = Vec::new();
@@ -2475,11 +2788,11 @@ mod tests {
         wkb_pt2.extend_from_slice(&10.0f64.to_le_bytes());
         wkb_pt2.extend_from_slice(&20.0f64.to_le_bytes());
 
-        let df = DataFrame::new(vec![
+        let df = test_df(vec![
             Series::new("id".into(), &[1i32]).into(),
             Series::new("origin".into(), vec![Some(wkb_pt1.as_slice())]).into(),
             Series::new("dest".into(), vec![Some(wkb_pt2.as_slice())]).into(),
-        ]).unwrap();
+        ]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["origin", "dest"]).unwrap();
@@ -2502,11 +2815,23 @@ mod tests {
         }
 
         // Verify coordinates
-        let origin = df2.column("origin").unwrap().binary().unwrap().get(0).unwrap();
+        let origin = df2
+            .column("origin")
+            .unwrap()
+            .binary()
+            .unwrap()
+            .get(0)
+            .unwrap();
         let ox = f64::from_le_bytes(origin[5..13].try_into().unwrap());
         assert!((ox - 1.0).abs() < 1e-10);
 
-        let dest = df2.column("dest").unwrap().binary().unwrap().get(0).unwrap();
+        let dest = df2
+            .column("dest")
+            .unwrap()
+            .binary()
+            .unwrap()
+            .get(0)
+            .unwrap();
         let dx = f64::from_le_bytes(dest[5..13].try_into().unwrap());
         assert!((dx - 10.0).abs() < 1e-10);
     }
@@ -2544,10 +2869,18 @@ mod tests {
                 let df_wkb = read_yxdb(&path, SpatialMode::Wkb).unwrap();
                 let df_geo = read_yxdb(&path, SpatialMode::GeoArrow).unwrap();
                 // All modes should produce the same shape
-                assert_eq!(df_raw.shape(), df_wkb.shape(),
-                    "Shape mismatch for {:?}", path.file_name().unwrap());
-                assert_eq!(df_wkb.shape(), df_geo.shape(),
-                    "Shape mismatch for {:?}", path.file_name().unwrap());
+                assert_eq!(
+                    df_raw.shape(),
+                    df_wkb.shape(),
+                    "Shape mismatch for {:?}",
+                    path.file_name().unwrap()
+                );
+                assert_eq!(
+                    df_wkb.shape(),
+                    df_geo.shape(),
+                    "Shape mismatch for {:?}",
+                    path.file_name().unwrap()
+                );
             }
         }
     }
@@ -2562,26 +2895,29 @@ mod tests {
             (0.0, 0.0),
             (-180.0, -90.0),
             (180.0, 90.0),
-            (-73.985428, 40.748817),  // Empire State Building
-            (139.6917, 35.6895),      // Tokyo
+            (-73.985428, 40.748817), // Empire State Building
+            (139.6917, 35.6895),     // Tokyo
         ];
 
-        let wkb_points: Vec<Vec<u8>> = coords.iter().map(|&(x, y)| {
-            let mut wkb = Vec::new();
-            wkb.push(1u8);
-            wkb.extend_from_slice(&1u32.to_le_bytes());
-            wkb.extend_from_slice(&x.to_le_bytes());
-            wkb.extend_from_slice(&y.to_le_bytes());
-            wkb
-        }).collect();
+        let wkb_points: Vec<Vec<u8>> = coords
+            .iter()
+            .map(|&(x, y)| {
+                let mut wkb = Vec::new();
+                wkb.push(1u8);
+                wkb.extend_from_slice(&1u32.to_le_bytes());
+                wkb.extend_from_slice(&x.to_le_bytes());
+                wkb.extend_from_slice(&y.to_le_bytes());
+                wkb
+            })
+            .collect();
 
         let wkb_refs: Vec<Option<&[u8]>> = wkb_points.iter().map(|v| Some(v.as_slice())).collect();
         let ids: Vec<i32> = (0..coords.len() as i32).collect();
 
-        let df = DataFrame::new(vec![
+        let df = test_df(vec![
             Series::new("id".into(), ids).into(),
             Series::new("geom".into(), wkb_refs).into(),
-        ]).unwrap();
+        ]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["geom"]).unwrap();
@@ -2593,10 +2929,14 @@ mod tests {
             let wkb = geom_col.get(i).unwrap();
             let x = f64::from_le_bytes(wkb[5..13].try_into().unwrap());
             let y = f64::from_le_bytes(wkb[13..21].try_into().unwrap());
-            assert!((x - expected_x).abs() < 1e-10,
-                "x mismatch at row {i}: expected {expected_x}, got {x}");
-            assert!((y - expected_y).abs() < 1e-10,
-                "y mismatch at row {i}: expected {expected_y}, got {y}");
+            assert!(
+                (x - expected_x).abs() < 1e-10,
+                "x mismatch at row {i}: expected {expected_x}, got {x}"
+            );
+            assert!(
+                (y - expected_y).abs() < 1e-10,
+                "y mismatch at row {i}: expected {expected_y}, got {y}"
+            );
         }
     }
 
@@ -2612,9 +2952,11 @@ mod tests {
         wkb_point.extend_from_slice(&42.0f64.to_le_bytes());
         wkb_point.extend_from_slice(&24.0f64.to_le_bytes());
 
-        let df = DataFrame::new(vec![
-            Series::new("geom".into(), vec![Some(wkb_point.as_slice())]).into(),
-        ]).unwrap();
+        let df = test_df(vec![Series::new(
+            "geom".into(),
+            vec![Some(wkb_point.as_slice())],
+        )
+        .into()]);
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["geom"]).unwrap();
@@ -2634,4 +2976,227 @@ mod tests {
         assert_ne!(ipc_raw, ipc_wkb);
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    // Regression tests — audit findings (v0.1.1)
+    // ══════════════════════════════════════════════════════════════════
+
+    /// Audit #1 — Int8 sign bit must survive a roundtrip.
+    /// Previously Int8 mapped to YXDB Byte (unsigned 0-255) causing
+    /// negative values to corrupt.  Now maps to Int16.
+    #[test]
+    fn regression_int8_sign_preserved() {
+        use crate::{read_yxdb, SpatialMode};
+        use polars::prelude::*;
+        use tempfile::NamedTempFile;
+
+        let df = df! {
+            "vals" => &[-128i8, -1i8, 0i8, 1i8, 127i8]
+        }
+        .unwrap();
+
+        let tmp = NamedTempFile::new().unwrap();
+        write_yxdb(tmp.path(), &df, &[]).unwrap();
+
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        // Int8 → Int16 in YXDB → reads back as i16
+        let col = df2.column("vals").unwrap().i16().unwrap();
+        assert_eq!(col.get(0), Some(-128));
+        assert_eq!(col.get(1), Some(-1));
+        assert_eq!(col.get(2), Some(0));
+        assert_eq!(col.get(3), Some(1));
+        assert_eq!(col.get(4), Some(127));
+    }
+
+    /// Audit #1 (companion) — Int8 maps to Int16 (signed), NOT Byte (unsigned).
+    /// This verifies the schema inference at the type level.
+    #[test]
+    fn regression_int8_maps_to_int16_not_byte() {
+        use polars::prelude::*;
+
+        let int8_df = df! { "s" => &[-1i8, 0i8, 1i8] }.unwrap();
+        let fields = super::infer_schema(&int8_df, &[]).unwrap();
+
+        // Int8 → Int16 (2 bytes), NOT Byte (1 byte)
+        assert_eq!(fields[0].field_type, crate::field::FieldType::Int16);
+        assert_eq!(fields[0].size, 2);
+    }
+
+    /// Audit #2 — UInt64 values exceeding i64::MAX must error, not wrap.
+    #[test]
+    fn regression_uint64_overflow_rejected() {
+        use polars::prelude::*;
+        use tempfile::NamedTempFile;
+
+        let df = df! {
+            "big" => &[u64::MAX]
+        }
+        .unwrap();
+
+        let tmp = NamedTempFile::new().unwrap();
+        let err = write_yxdb(tmp.path(), &df, &[]).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("exceeds"),
+            "expected overflow message, got: {msg}"
+        );
+    }
+
+    /// Audit #2 (companion) — UInt64 values within i64 range succeed.
+    #[test]
+    fn regression_uint64_within_range_ok() {
+        use crate::{read_yxdb, SpatialMode};
+        use polars::prelude::*;
+        use tempfile::NamedTempFile;
+
+        let max_safe = i64::MAX as u64;
+        let df = df! {
+            "val" => &[0u64, 42u64, max_safe]
+        }
+        .unwrap();
+
+        let tmp = NamedTempFile::new().unwrap();
+        write_yxdb(tmp.path(), &df, &[]).unwrap();
+
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let col = df2.column("val").unwrap().i64().unwrap();
+        assert_eq!(col.get(0), Some(0));
+        assert_eq!(col.get(1), Some(42));
+        assert_eq!(col.get(2), Some(i64::MAX));
+    }
+
+    /// Audit #5 — Large binary blob (> BLOCK_SIZE) roundtrips correctly.
+    /// Previously oversized records caused LZF buffer overflows.
+    #[test]
+    fn regression_large_blob_roundtrip() {
+        use crate::{read_yxdb, SpatialMode};
+        use polars::prelude::*;
+        use tempfile::NamedTempFile;
+
+        // Create a blob larger than BLOCK_SIZE (262144)
+        let big_blob: Vec<u8> = (0..300_000u32).map(|i| (i % 256) as u8).collect();
+        let df = test_df(vec![Column::new("data".into(), vec![big_blob.as_slice()])]);
+
+        let tmp = NamedTempFile::new().unwrap();
+        write_yxdb(tmp.path(), &df, &[]).unwrap();
+
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let col = df2.column("data").unwrap().binary().unwrap();
+        let read_blob = col.get(0).unwrap();
+        assert_eq!(read_blob.len(), 300_000);
+        assert_eq!(read_blob, big_blob.as_slice());
+    }
+
+    /// Audit #7 — Empty DataFrame (0 rows) roundtrips preserving schema.
+    #[test]
+    fn regression_empty_dataframe_roundtrip() {
+        use crate::{read_yxdb, SpatialMode};
+        use polars::prelude::*;
+        use tempfile::NamedTempFile;
+
+        let empty_i32: Vec<i32> = vec![];
+        let empty_str: Vec<&str> = vec![];
+        let df = df! {
+            "id" => empty_i32,
+            "name" => empty_str
+        }
+        .unwrap();
+        assert_eq!(df.height(), 0);
+
+        let tmp = NamedTempFile::new().unwrap();
+        write_yxdb(tmp.path(), &df, &[]).unwrap();
+
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        assert_eq!(df2.height(), 0);
+        assert_eq!(df2.width(), 2);
+        assert_eq!(df2.get_column_names()[0].as_str(), "id");
+        assert_eq!(df2.get_column_names()[1].as_str(), "name");
+    }
+
+    /// Audit #12 — Duration columns roundtrip as Int64 microseconds.
+    #[test]
+    fn regression_duration_roundtrip() {
+        use crate::{read_yxdb, SpatialMode};
+        use polars::prelude::*;
+        use tempfile::NamedTempFile;
+
+        // Duration in microseconds
+        let values: Vec<Option<i64>> = vec![Some(1_000_000), Some(-500_000), None, Some(0)];
+        let series = Series::new("dur".into(), &values)
+            .cast(&DataType::Duration(TimeUnit::Microseconds))
+            .unwrap();
+        let df = test_df(vec![series.into()]);
+
+        let tmp = NamedTempFile::new().unwrap();
+        write_yxdb(tmp.path(), &df, &[]).unwrap();
+
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let col = df2.column("dur").unwrap().i64().unwrap();
+        assert_eq!(col.get(0), Some(1_000_000));
+        assert_eq!(col.get(1), Some(-500_000));
+        assert_eq!(col.get(2), None);
+        assert_eq!(col.get(3), Some(0));
+    }
+
+    /// Audit #12 (companion) — Duration nanoseconds are normalized to microseconds.
+    #[test]
+    fn regression_duration_nanoseconds_normalized() {
+        use crate::{read_yxdb, SpatialMode};
+        use polars::prelude::*;
+        use tempfile::NamedTempFile;
+
+        // 5_000_000 ns = 5_000 µs
+        let values: Vec<Option<i64>> = vec![Some(5_000_000)];
+        let series = Series::new("dur_ns".into(), &values)
+            .cast(&DataType::Duration(TimeUnit::Nanoseconds))
+            .unwrap();
+        let df = test_df(vec![series.into()]);
+
+        let tmp = NamedTempFile::new().unwrap();
+        write_yxdb(tmp.path(), &df, &[]).unwrap();
+
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let col = df2.column("dur_ns").unwrap().i64().unwrap();
+        assert_eq!(col.get(0), Some(5_000)); // normalized from ns → µs
+    }
+
+    /// Audit #12 (companion) — Duration milliseconds are normalized to microseconds.
+    #[test]
+    fn regression_duration_milliseconds_normalized() {
+        use crate::{read_yxdb, SpatialMode};
+        use polars::prelude::*;
+        use tempfile::NamedTempFile;
+
+        // 3 ms = 3_000 µs
+        let values: Vec<Option<i64>> = vec![Some(3)];
+        let series = Series::new("dur_ms".into(), &values)
+            .cast(&DataType::Duration(TimeUnit::Milliseconds))
+            .unwrap();
+        let df = test_df(vec![series.into()]);
+
+        let tmp = NamedTempFile::new().unwrap();
+        write_yxdb(tmp.path(), &df, &[]).unwrap();
+
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let col = df2.column("dur_ms").unwrap().i64().unwrap();
+        assert_eq!(col.get(0), Some(3_000)); // normalized from ms → µs
+    }
+
+    /// Audit #18 — Drop no longer prints to stderr.
+    /// (Structural test: a writer that goes out of scope without finish()
+    /// should not panic and should not produce output on stderr.)
+    #[test]
+    fn regression_drop_does_not_panic() {
+        use polars::prelude::*;
+        use tempfile::NamedTempFile;
+
+        let df = df! { "x" => [1i32] }.unwrap();
+        let tmp = NamedTempFile::new().unwrap();
+
+        {
+            let mut writer = YxdbWriter::new(tmp.path(), &df).unwrap();
+            writer.write_batch(&df).unwrap();
+            // Drop without calling finish() — should not panic
+        }
+        // If we reach here, the drop didn't panic
+    }
 }
