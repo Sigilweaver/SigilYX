@@ -4,19 +4,45 @@ REM Requires Visual Studio 2022 Build Tools
 
 setlocal
 
-set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-set "CMAKE=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+REM Try BuildTools first, then Community, then Professional, then Enterprise
+set "VCVARS="
+for %%E in (BuildTools Community Professional Enterprise) do (
+    if not defined VCVARS (
+        if exist "C:\Program Files (x86)\Microsoft Visual Studio\2022\%%E\VC\Auxiliary\Build\vcvars64.bat" (
+            set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2022\%%E\VC\Auxiliary\Build\vcvars64.bat"
+        )
+        if exist "C:\Program Files\Microsoft Visual Studio\2022\%%E\VC\Auxiliary\Build\vcvars64.bat" (
+            set "VCVARS=C:\Program Files\Microsoft Visual Studio\2022\%%E\VC\Auxiliary\Build\vcvars64.bat"
+        )
+    )
+)
+
+REM Try to find cmake from VS or PATH
+set "CMAKE="
+where cmake >nul 2>&1 && set "CMAKE=cmake"
+if not defined CMAKE (
+    for %%E in (BuildTools Community Professional Enterprise) do (
+        if not defined CMAKE (
+            if exist "C:\Program Files (x86)\Microsoft Visual Studio\2022\%%E\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" (
+                set "CMAKE=C:\Program Files (x86)\Microsoft Visual Studio\2022\%%E\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+            )
+            if exist "C:\Program Files\Microsoft Visual Studio\2022\%%E\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" (
+                set "CMAKE=C:\Program Files\Microsoft Visual Studio\2022\%%E\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+            )
+        )
+    )
+)
+
 set "SRCDIR=%~dp0AlteryxOpenYXDB"
 set "BUILDDIR=%~dp0alteryx_build"
 set "OUTDIR=%~dp0"
 
-if not exist "%VCVARS%" (
-    echo ERROR: Cannot find vcvars64.bat
+if not defined VCVARS (
+    echo ERROR: Cannot find vcvars64.bat — install Visual Studio 2022 Build Tools, Community, Professional, or Enterprise
     exit /b 1
 )
-if not exist "%CMAKE%" (
-    echo ERROR: Cannot find cmake.exe
-    exit /b 1
+if not defined CMAKE (
+    echo WARNING: Cannot find cmake.exe — library rebuild will not be possible
 )
 if not exist "%SRCDIR%\CMakeLists.txt" (
     echo ERROR: AlteryxOpenYXDB not found. Clone it first:
