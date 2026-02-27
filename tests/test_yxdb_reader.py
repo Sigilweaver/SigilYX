@@ -358,7 +358,7 @@ class TestErrorHandling:
             sigilyx.read_yxdb(_yxdb("not_a_yxdb.txt"))
 
     def test_too_small_file(self):
-        with pytest.raises(OSError):
+        with pytest.raises((OSError, ValueError)):
             sigilyx.read_yxdb(_yxdb("too_small.bin"))
 
     def test_nonexistent_file(self):
@@ -1210,10 +1210,9 @@ class TestReadEdgeCases:
         assert df1.dtypes == df2.dtypes
 
     def test_read_columns_nonexistent_column(self):
-        """Requesting a column that doesn't exist should return empty or raise."""
-        # Current behavior: returns empty DataFrame (no matching columns)
-        df = sigilyx.read_yxdb_columns(_yxdb("SingleColumn.yxdb"), ["NoSuchColumn"])
-        assert df.width == 0
+        """Requesting a column that doesn't exist should raise ValueError."""
+        with pytest.raises(ValueError, match="not found"):
+            sigilyx.read_yxdb_columns(_yxdb("SingleColumn.yxdb"), ["NoSuchColumn"])
 
     def test_read_columns_empty_list(self):
         """Requesting zero columns should either raise or return 0-width frame."""

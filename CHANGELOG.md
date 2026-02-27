@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Spatial:** Removed dead/duplicated loop in MultiPolygon SHP→WKB conversion
+  that could produce corrupt geometry output
+- **Reader:** Added field offset validation after XML parsing to reject
+  corrupt headers before memory mapping
+- **Writer:** `YxdbWriter::finish()` marked `#[must_use]`; `Drop` impl warns
+  if writer dropped without calling `finish()` when records were written
+- **Record parsing:** `locate_var_data` returns `None` (null) for corrupt
+  variable-length records instead of `Some(&[])` (empty)
+- **Build:** `STRICT_ALIGN` in LZF decompression is now conditional on CPU
+  architecture (disabled on x86_64, enabled on ARM)
+- **Python:** `pl.Duration` columns now rejected with a clear error instead
+  of being silently accepted
+- **Python:** Replaced deprecated `pl.Utf8` references with `pl.String`
+- **Python:** TypeError fallback in write path tightened to only match
+  pyo3-polars compat errors, not arbitrary TypeErrors
+- **PyO3:** `batch_size=0` now raises `ValueError` instead of causing a panic
+- **PyO3:** Spatial mode parsing is now case-insensitive (`"WKB"` works)
+- **PyO3:** `YxdbStreamWriter` supports Python context manager protocol
+- **PyO3:** Deduplicated type override logic between direct and IPC write paths
+
+### Changed
+
+- **Python:** Split monolithic `__init__.py` (1345 lines) into focused
+  sub-modules (`_types`, `_readers`, `_writers`, `_geo`, `_polars_plugin`)
+  for maintainability
+- **SPECIFICATION.md:** Corrected header offset table (file_id, meta_info_size,
+  spatial_index_pos, record_block_index_pos, compression_version)
+
+### Added
+
+- `#![deny(unsafe_op_in_unsafe_fn)]` and
+  `#![warn(clippy::undocumented_unsafe_blocks)]` crate-level lints
+- `// SAFETY:` documentation on all unsafe blocks
+- `cargo audit` step in CI pipeline
+- `rust-toolchain.toml` for reproducible builds
+- `THIRD_PARTY_LICENSES.md` for vendored LZF decompression code
+- Tests for `write_yxdb_with_overrides()` API
+- Strip debug symbols from release binaries
+- MSRV (`rust-version = "1.75"`) declared in Cargo.toml
+- `--locked` flag on all CI cargo commands
+- Python 3.12 added to CI test matrix
+
 ## [0.1.0] - 2026-02-25
 
 ### Added
