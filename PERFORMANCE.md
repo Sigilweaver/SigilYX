@@ -111,17 +111,90 @@ All files contain 100,000 rows generated deterministically (seed=42).
 
 ---
 
+## Read Performance: Per-Type Breakdown
+
+Single-column files, 10.1 M rows each (except Blob at 7.3 M due to size).
+Measures the raw decode throughput for every YXDB field type independently.
+
+| Type | Rows | File (MB) | Read (s) | MB/s | Mrows/s | Notes |
+|------|-----:|----------:|---------:|-----:|--------:|-------|
+| Byte | 10.1M | 101 | 0.24 | 413 | 41.5 | Fastest per-row — trivial decode |
+| Int16 | 10.1M | 152 | 0.28 | 540 | 36.0 | |
+| Int32 | 10.1M | 253 | 0.43 | 588 | 23.5 | |
+| Bool | 10.1M | 42 | 0.51 | 82 | 19.7 | Small file, low MB/s but high Mrows/s |
+| Float | 10.1M | 253 | 0.48 | 525 | 21.0 | |
+| Double | 10.1M | 455 | 0.72 | 634 | 14.1 | **Highest MB/s** — direct memcpy |
+| Int64 | 10.1M | 442 | 0.79 | 557 | 12.7 | |
+| Date | 10.1M | 461 | 0.98 | 472 | 10.3 | |
+| Time | 10.1M | 406 | 1.01 | 400 | 10.0 | |
+| DateTime | 10.1M | 874 | 1.69 | 518 | 6.0 | |
+| FixedDecimal | 10.1M | 963 | 2.19 | 440 | 4.6 | String-encoded decimal parse |
+| V_String | 10.1M | 1,295 | 3.55 | 365 | 2.9 | Variable-length UTF-8 |
+| String | 10.1M | 1,054 | 5.57 | 189 | 1.8 | Fixed-width, null-pad strip |
+| V_WString | 10.1M | 2,826 | 6.92 | 409 | 1.5 | Variable-length UTF-16→UTF-8 |
+| SpatialObj | 10.1M | 909 | 9.09 | 100 | 1.1 | WKB binary blobs |
+| Blob | 7.3M | 4,058 | 11.64 | 349 | 0.6 | Large binary (avg 583 bytes/row) |
+| WString | 10.1M | 2,261 | 97.60 | 23 | 0.1 | ⚠ Fixed-width UTF-16, known bottleneck |
+| **Total** | — | **16,802** | **143.7** | **117** | — | |
+
+Key takeaways:
+- **Numeric types (Byte→Int64)** are memory-bandwidth limited at 400-634 MB/s
+- **Variable-length strings** (V_String, V_WString) are 300-400 MB/s — the SIMD UTF-16 fast-path helps V_WString significantly
+- **Fixed-width WString is the outlier** at 23 MB/s — each row requires scanning a fixed-width UTF-16 buffer and stripping null padding; this is the #1 optimisation target
+- **SpatialObj** at 100 MB/s — WKB blob decode cost; acceptable for the data type
+
+---
+
+## Streaming: Larger-Than-RAM Processing
+
+Demonstrates `scan_yxdb()` and `read_yxdb_batches()` processing a file that **exceeds available RAM** with constant memory overhead — a capability no other YXDB library offers.
+
+**Setup:** 32.5 GB file (90 M rows × 20 mixed-type columns) on a machine with 11.9 GB available / 16.9 GB total RAM.
+
+**Task:** Single-pass aggregate query:
+```sql
+SELECT COUNT(*), SUM(f64_a), AVG(f64_b)
+FROM   bench_giant_90000000.yxdb
+WHERE  i32_a > 0
+```
+
+| Variant | Status | Time | GB/s | Peak RAM | Method |
+|---------|--------|-----:|-----:|---------:|--------|
+| **sigilyx-scan** | ✓ | **52.6s** | **0.62** | **1.1 GB** | `scan_yxdb()` + Polars streaming engine |
+| **sigilyx-batches** | ✓ | **53.5s** | **0.61** | **1.1 GB** | `read_yxdb_batches()` + Python loop |
+| sigilyx-full-read | ✗ DNF | — | — | — | `read()` — OOM (needs 32+ GB) |
+| Any full-materialising library | ✗ DNF | — | — | — | Must load entire file into RAM |
+
+**Headline:** 32.5 GB file processed in 52.6 seconds using only 1.1 GB peak RAM (3.4% of file size). Any library that calls the equivalent of `read()` on this file will OOM.
+
+> **Note on Alteryx OpenYXDB C++:** The Alteryx OpenYXDB library provides only a row-by-row reader with no batching or streaming API. While it uses O(1) memory per row, it cannot perform vectorised queries and would process this file orders of magnitude slower than the Polars streaming engine. The Alteryx Designer desktop application handles large files by compressing/swapping to disk, but that capability is not exposed in the open-source library.
+
+---
+
 ## Running Benchmarks
 
 ```bash
 # Generate benchmark data (100K rows x 5 profiles)
 python benchmarks/generate_benchmark_data.py
 
+# Generate per-type files (10.1M rows × 17 types, ~16.8 GB total)
+python benchmarks/generate_benchmark_data.py --per-type
+
+# Generate giant file (90M rows × 20 cols, ~32.5 GB)
+python benchmarks/generate_benchmark_data.py --giant
+
 # Cross-language benchmark (auto-detects available toolchains)
 python benchmarks/benchmark_cross_language.py --runs 50
 
 # Python-only benchmark (SigilYX formats + yxdb-py)
 python benchmarks/benchmark_python_formats.py --runs 50
+
+# Per-type read benchmark (all 17 YXDB field types)
+python benchmarks/read_per_type.py
+
+# Streaming benchmark (constant-memory processing of large files)
+python benchmarks/benchmark_streaming.py
+python benchmarks/benchmark_streaming.py --skip-full-read  # skip OOM variant
 
 # Single file
 python benchmarks/benchmark.py path/to/file.yxdb --iterations 10
