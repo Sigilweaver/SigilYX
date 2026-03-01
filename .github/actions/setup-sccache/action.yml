@@ -1,0 +1,28 @@
+name: Setup sccache
+description: Install sccache and probe the GHA cache backend
+
+runs:
+  using: composite
+  steps:
+    - uses: mozilla-actions/sccache-action@v0.0.7
+      continue-on-error: true
+
+    - name: Probe sccache backend
+      shell: bash
+      run: |
+        # Do a real compile through sccache to verify the GHA cache backend
+        # is reachable. --show-stats only pings the local daemon and can
+        # miss backend outages that crash the build later.
+        _probe="$(mktemp -d)"
+        trap 'rm -rf "$_probe"' EXIT
+        echo 'fn main(){}' > "$_probe/p.rs"
+        if command -v sccache &>/dev/null \
+           && sccache rustc "$_probe/p.rs" --crate-type lib --edition 2021 \
+                -o "$_probe/p" 2>/dev/null; then
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "sccache is available and cache backend is reachable"
+        else
+          echo "::warning::sccache unavailable or cache backend unreachable — building without compilation cache"
+          sccache --stop-server 2>/dev/null || true
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
+        fi
