@@ -11,6 +11,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: true
+
 jobs:
   build-sdist:
     name: Build sdist
@@ -49,13 +54,13 @@ jobs:
       matrix:
         include:
           # Linux x86_64
-          - os: ubuntu-latest
+          - os: warp-ubuntu-latest-x64-4x
             target: x86_64
-          # Linux aarch64
-          - os: ubuntu-latest
+          # Linux aarch64 — native ARM64 runner avoids cross-compilation issues
+          - os: warp-ubuntu-latest-arm64-4x
             target: aarch64
           # Windows x86_64
-          - os: windows-latest
+          - os: warp-windows-latest-x64-4x
             target: x64
           # macOS x86_64 (cross-compiled from ARM runner)
           - os: macos-latest
@@ -74,20 +79,16 @@ jobs:
           perl -i -pe "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" \
             sigilyx/Cargo.toml sigilyx-python/Cargo.toml pyproject.toml
 
-      # Linux: manylinux containers bundle all Python versions — only need one here.
-      # Windows/macOS: maturin uses the installed system interpreters, so install all targets.
-      - uses: actions/setup-python@v5
-        if: matrix.os != 'ubuntu-latest'
-        with:
-          python-version: |
-            3.9
-            3.10
-            3.11
-            3.12
-            3.13
+      - uses: dtolnay/rust-toolchain@stable
 
+      - uses: ./.github/actions/setup-sccache
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wheels-${{ matrix.os }}-${{ matrix.target }}
+
+      # abi3 wheels only need one Python present for maturin to drive the build
       - uses: actions/setup-python@v5
-        if: matrix.os == 'ubuntu-latest'
         with:
           python-version: "3.13"
 
@@ -95,8 +96,13 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --interpreter 3.9 3.10 3.11 3.12 3.13
+          # abi3-py39 produces a single cp39-abi3 wheel that works on Python 3.9+
+          # No --interpreter list needed; maturin detects abi3 from Cargo features.
+          args: --release --out dist
           manylinux: auto
+          # sccache is configured via RUSTC_WRAPPER in the environment;
+          # the maturin sccache: flag would re-enable it even when we
+          # explicitly disabled it due to a cache backend outage.
 
       - uses: actions/upload-artifact@v4
         with:

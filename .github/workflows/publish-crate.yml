@@ -11,6 +11,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: true
+
 jobs:
   publish:
     name: Publish sigilyx crate
@@ -29,14 +34,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: ./.github/actions/setup-sccache
       - uses: Swatinem/rust-cache@v2
 
       - name: Regenerate lock file after version sync
         if: startsWith(github.ref, 'refs/tags/v')
         run: cargo generate-lockfile
-
-      - name: Verify crate builds
-        run: cargo build --release --locked -p sigilyx
 
       - name: Dry-run publish
         run: cargo publish --dry-run --allow-dirty --locked -p sigilyx
