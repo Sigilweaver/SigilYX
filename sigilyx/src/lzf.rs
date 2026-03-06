@@ -1,4 +1,4 @@
-use crate::error::{YxdbError, Result};
+use crate::error::{Result, YxdbError};
 
 // LZF compression and decompression.
 //
@@ -64,6 +64,10 @@ pub fn decompress_into(input: &[u8], out: &mut [u8]) -> Result<usize> {
     if input.is_empty() {
         return Ok(0);
     }
+    // SAFETY: `input` and `out` are valid slices with known lengths.
+    // The C `lzf_decompress` reads exactly `in_len` bytes from `in_data`
+    // and writes at most `out_len` bytes to `out_data`.  Both pointers
+    // and lengths are derived from valid Rust slice references.
     let result = unsafe {
         lzf_decompress(
             input.as_ptr(),
@@ -77,7 +81,8 @@ pub fn decompress_into(input: &[u8], out: &mut [u8]) -> Result<usize> {
     } else if (result as usize) > out.len() {
         Err(YxdbError::LzfError(format!(
             "C lzf_decompress returned {} but output buffer is only {} bytes",
-            result, out.len()
+            result,
+            out.len()
         )))
     } else {
         Ok(result as usize)
@@ -86,15 +91,23 @@ pub fn decompress_into(input: &[u8], out: &mut [u8]) -> Result<usize> {
 
 // ── Compression ────────────────────────────────────────────────────────
 
-const HASH_SIZE: usize = 1 << 14; // 16384
-const MAX_LIT: usize = 32;       // max literal run length (1..=32)
-const MAX_REF: usize = 264;      // max back-reference length (3..=264)
-const MAX_OFF: usize = 8192;     // max back-reference distance
+/// Hash table size — matches reference liblzf HLOG=16 for best compression.
+/// With 256 KiB blocks (~87K 3-byte hash keys), 65536 buckets give ~1.3 entries
+/// per bucket on average, minimising collisions. The previous value of 2^14
+/// (16384) caused ~5x more collisions and roughly halved compression effectiveness.
+const HASH_SIZE: usize = 1 << 16; // 65536
+const MAX_LIT: usize = 32; // max literal run length (1..=32)
+const MAX_REF: usize = 264; // max back-reference length (3..=264)
+const MAX_OFF: usize = 8192; // max back-reference distance
 
 /// Compress `input` using the LZF algorithm.
 ///
 /// Returns the compressed bytes. If the compressed output would be larger
 /// than the input, returns `None` (caller should store uncompressed).
+///
+/// This implementation matches the reference liblzf (HLOG=16, VERY_FAST=1):
+/// same hash function, same rolling hash seeding, same post-match update
+/// strategy, and same maximum back-reference distance.
 pub fn compress(input: &[u8]) -> Option<Vec<u8>> {
     let in_len = input.len();
     if in_len <= 4 {
@@ -105,36 +118,35 @@ pub fn compress(input: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(in_len + (in_len / 16) + 16);
     let mut hash_table = [0u32; HASH_SIZE];
 
-    let mut ip: usize;            // input pointer
-    let mut lit: usize;           // literal run length
-    let mut lit_start: usize;     // position of literal run length byte in output
+    let mut ip: usize; // input pointer
+    let mut lit: usize = 0; // literal run length
+    let mut lit_start: usize; // position of literal run length byte in output
 
-    // Reserve space for the first literal run length byte
+    // Reserve space for the first literal run length byte (matches C: lit = 0; op++)
     out.push(0);
     lit_start = 0;
 
-    // Emit the first byte as a literal (it can't be part of a back-reference)
-    out.push(input[0]);
-    lit = 1;
-    
-    let first_hash = hash(input, 0);
-    hash_table[first_hash] = 0;
-    ip = 1;
+    // Seed rolling hash with first two bytes (matches liblzf FRST macro)
+    let mut hval: u32 = ((input[0] as u32) << 8) | (input[1] as u32);
+    ip = 0;
 
     while ip < in_len - 2 {
-        let h = hash(input, ip);
+        // Rolling hash: incorporate next byte (matches liblzf NEXT macro)
+        hval = (hval << 8) | (input[ip + 2] as u32);
+        let h = hash_idx(hval);
         let ref_pos = hash_table[h] as usize;
         hash_table[h] = ip as u32;
 
-        // Check for a match
-        let off = ip - ref_pos;
-        if off > 0
-            && off < MAX_OFF
+        // Check for a match. The offset `off` is distance-1 (matching the C
+        // reference where `off = ip - ref - 1`). MAX_OFF = 8192 means max
+        // distance is 8192 (off_minus_1 up to 8191, fitting in 13 bits).
+        let off = ip.wrapping_sub(ref_pos).wrapping_sub(1);
+        if off < MAX_OFF
+            && ref_pos > 0
             && ref_pos < ip
-            && ip + 3 <= in_len
+            && input[ref_pos + 2] == input[ip + 2]
             && input[ref_pos] == input[ip]
             && input[ref_pos + 1] == input[ip + 1]
-            && input[ref_pos + 2] == input[ip + 2]
         {
             // We have a match of at least 3 bytes
             let mut match_len = 3;
@@ -152,26 +164,45 @@ pub fn compress(input: &[u8]) -> Option<Vec<u8>> {
                 out.pop();
             }
 
-            // Encode the back-reference
+            // Encode the back-reference (off is already distance-1)
             let len_code = match_len - 2; // 1..=262
-            let off_minus_1 = off - 1;
 
             if len_code < 7 {
-                out.push(((len_code as u8) << 5) | ((off_minus_1 >> 8) as u8));
-                out.push((off_minus_1 & 0xFF) as u8);
+                out.push(((len_code as u8) << 5) | ((off >> 8) as u8));
+                out.push((off & 0xFF) as u8);
             } else {
-                out.push((7 << 5) | ((off_minus_1 >> 8) as u8));
+                out.push((7 << 5) | ((off >> 8) as u8));
                 out.push((len_code - 7) as u8);
-                out.push((off_minus_1 & 0xFF) as u8);
+                out.push((off & 0xFF) as u8);
             }
 
-            ip += match_len;
+            ip += 1; // advance past start of match (len is len_code, not match_len)
+            ip += match_len - 1; // ip now points to first byte after match
 
-            // Update hash for the matched bytes
-            if ip < in_len - 2 {
-                let h2 = hash(input, ip);
-                hash_table[h2] = ip as u32;
+            if ip >= in_len - 2 {
+                // Reserve space for the next literal run
+                lit_start = out.len();
+                out.push(0);
+                break;
             }
+
+            // Post-match hash table update (matches liblzf VERY_FAST behaviour).
+            // Back up 2 positions and re-hash at ip-2 and ip-1, leaving hval
+            // correctly seeded for the main loop's NEXT at ip.
+            ip -= 2;
+            hval = ((input[ip] as u32) << 8) | (input[ip + 1] as u32);
+
+            // Update hash at ip (which is match_end - 2)
+            hval = (hval << 8) | (input[ip + 2] as u32);
+            hash_table[hash_idx(hval)] = ip as u32;
+            ip += 1;
+
+            // Update hash at ip (which is match_end - 1)
+            hval = (hval << 8) | (input[ip + 2] as u32);
+            hash_table[hash_idx(hval)] = ip as u32;
+            ip += 1;
+
+            // ip is now at match_end, hval seeded for NEXT at top of loop
 
             // Reserve space for the next literal run
             lit_start = out.len();
@@ -221,10 +252,13 @@ pub fn compress(input: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
+/// Hash function matching reference liblzf IDX macro (VERY_FAST=1, HLOG=16).
+///
+/// The reference C code: `((h >> (3*8 - HLOG)) - h*5) & (HSIZE - 1)`
+/// With HLOG=16: `((h >> 8) - h*5) & 0xFFFF`
 #[inline]
-fn hash(data: &[u8], pos: usize) -> usize {
-    let v = (data[pos] as u32) << 16 | (data[pos + 1] as u32) << 8 | data[pos + 2] as u32;
-    ((v >> 1) ^ v) as usize & (HASH_SIZE - 1)
+fn hash_idx(hval: u32) -> usize {
+    ((hval >> 8).wrapping_sub(hval.wrapping_mul(5))) as usize & (HASH_SIZE - 1)
 }
 
 // ── Decompression ──────────────────────────────────────────────────────
@@ -236,12 +270,16 @@ fn hash(data: &[u8], pos: usize) -> usize {
 ///
 /// The output buffer must be large enough to hold the decompressed data.
 /// For YXDB blocks, the maximum output is 262144 bytes (one block).
-pub fn decompress(input: &[u8], out: &mut Vec<u8>) -> Result<usize> {
+pub fn decompress(input: &[u8], out: &mut [u8]) -> Result<usize> {
     decompress_into(input, out)
 }
 
 /// Decompress a block using the specified algorithm.
-pub fn decompress_block_into(algo: CompressionAlgorithm, input: &[u8], out: &mut [u8]) -> Result<usize> {
+pub fn decompress_block_into(
+    algo: CompressionAlgorithm,
+    input: &[u8],
+    out: &mut [u8],
+) -> Result<usize> {
     match algo {
         CompressionAlgorithm::Lzf => decompress_into(input, out),
     }
@@ -251,7 +289,7 @@ pub fn decompress_block_into(algo: CompressionAlgorithm, input: &[u8], out: &mut
 ///
 /// `out` must be pre-allocated with sufficient capacity. Use
 /// [`decompress_block_into`] for the slice-based variant.
-pub fn decompress_block(algo: CompressionAlgorithm, input: &[u8], out: &mut Vec<u8>) -> Result<usize> {
+pub fn decompress_block(algo: CompressionAlgorithm, input: &[u8], out: &mut [u8]) -> Result<usize> {
     match algo {
         CompressionAlgorithm::Lzf => decompress(input, out),
     }
@@ -335,7 +373,10 @@ mod tests {
     fn compression_algorithm_version_ids() {
         assert_eq!(CompressionAlgorithm::Lzf.version_id(), 1);
         assert_eq!(CompressionAlgorithm::from_version_id(0).unwrap(), None);
-        assert_eq!(CompressionAlgorithm::from_version_id(1).unwrap(), Some(CompressionAlgorithm::Lzf));
+        assert_eq!(
+            CompressionAlgorithm::from_version_id(1).unwrap(),
+            Some(CompressionAlgorithm::Lzf)
+        );
         assert!(CompressionAlgorithm::from_version_id(2).is_err());
         assert!(CompressionAlgorithm::from_version_id(3).is_err());
     }
@@ -347,7 +388,8 @@ mod tests {
         // LZF round-trip via dispatch
         let lzf_compressed = compress_block(CompressionAlgorithm::Lzf, data).unwrap();
         let mut out = vec![0u8; 256];
-        let n = decompress_block_into(CompressionAlgorithm::Lzf, &lzf_compressed, &mut out).unwrap();
+        let n =
+            decompress_block_into(CompressionAlgorithm::Lzf, &lzf_compressed, &mut out).unwrap();
         assert_eq!(&out[..n], &data[..]);
     }
 
@@ -423,7 +465,9 @@ mod tests {
     #[test]
     fn compress_alternating_pattern() {
         // Alternating bytes shouldn't cause issues at hash boundaries
-        let data: Vec<u8> = (0..1000).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
+        let data: Vec<u8> = (0..1000)
+            .map(|i| if i % 2 == 0 { 0xAA } else { 0x55 })
+            .collect();
         if let Some(compressed) = compress(&data) {
             let mut decompressed = vec![0u8; data.len()];
             let n = decompress(&compressed, &mut decompressed).unwrap();

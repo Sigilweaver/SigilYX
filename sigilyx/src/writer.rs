@@ -236,7 +236,19 @@ impl<W: Write + Seek> YxdbWriter<W> {
                 self.flush_block()?;
             }
 
-            self.block_buf.extend_from_slice(&self.ser_record);
+            // Append record data, splitting across block boundaries if needed.
+            let mut offset = 0;
+            let rec_len = self.ser_record.len();
+            while offset < rec_len {
+                let space = BLOCK_SIZE - self.block_buf.len();
+                let chunk = (rec_len - offset).min(space);
+                self.block_buf
+                    .extend_from_slice(&self.ser_record[offset..offset + chunk]);
+                offset += chunk;
+                if self.block_buf.len() >= BLOCK_SIZE && offset < rec_len {
+                    self.flush_block()?;
+                }
+            }
         }
 
         self.record_count += num_rows as u64;
@@ -343,9 +355,16 @@ pub fn infer_schema(df: &DataFrame, spatial_columns: &[&str]) -> Result<Vec<Fiel
             DataType::Float32 => (FieldType::Float, 4, 0),
             DataType::Float64 => (FieldType::Double, 8, 0),
             DataType::String => {
-                // Use V_WString for variable-length strings
-                // Size 262144 (256K chars) is the max for Alteryx compatibility
-                (FieldType::VWString, 262144, 0)
+                // Pick V_String (1 byte/char) when all values are ASCII/Latin-1,
+                // otherwise V_WString (UTF-16LE, 2 bytes/char). V_String produces
+                // ~2x smaller variable data for ASCII-only columns.
+                let needs_wide = column_needs_wide_string(col);
+                let max_len = column_max_string_size(col, needs_wide);
+                if needs_wide {
+                    (FieldType::VWString, max_len, 0)
+                } else {
+                    (FieldType::VString, max_len, 0)
+                }
             }
             DataType::Date => (FieldType::Date, 10, 0),
             DataType::Datetime(_, _) => (FieldType::DateTime, 19, 0),
@@ -387,6 +406,49 @@ pub fn infer_schema(df: &DataFrame, spatial_columns: &[&str]) -> Result<Vec<Fiel
     }
 
     Ok(fields)
+}
+
+/// Check whether a string column contains any non-Latin-1 characters.
+///
+/// Returns `true` if V_WString (UTF-16LE) is needed, `false` if V_String
+/// (single-byte Latin-1) is sufficient. V_String stores each character as
+/// one byte, halving the variable-data size for ASCII/Latin-1 content
+/// compared to V_WString's UTF-16LE encoding.
+fn column_needs_wide_string(col: &Column) -> bool {
+    let Ok(ca) = col.str() else {
+        return true; // fall back to wide if we can't inspect
+    };
+    for s in ca.iter().flatten() {
+        // Latin-1 covers U+0000..U+00FF (single-byte range).
+        // Any character above U+00FF requires UTF-16LE (V_WString).
+        if s.chars().any(|c| c as u32 > 0xFF) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Compute the `size` (declared max length) for a string column.
+///
+/// For V_String the size is the max byte length across all values.
+/// For V_WString the size is the max UTF-16 code-unit count.
+/// Returns at least 1 (for columns with only empty strings or nulls).
+fn column_max_string_size(col: &Column, wide: bool) -> usize {
+    let Ok(ca) = col.str() else {
+        return 256; // fallback
+    };
+    let mut max_len: usize = 0;
+    for s in ca.iter().flatten() {
+        let len = if wide {
+            s.encode_utf16().count()
+        } else {
+            s.len() // byte length for Latin-1/ASCII
+        };
+        if len > max_len {
+            max_len = len;
+        }
+    }
+    max_len.max(1)
 }
 
 // ── Core writer ────────────────────────────────────────────────────────
@@ -498,33 +560,39 @@ fn build_header(
 fn build_meta_xml(fields: &[FieldMeta]) -> String {
     use std::fmt::Write;
     let mut xml = String::with_capacity(256);
-    // Match the exact format Alteryx uses
-    xml.push_str("\n<RecordInfo>\n");
+    // Match the reference Alteryx OpenYXDB format (no leading newline,
+    // alphabetical attribute ordering, no size for fixed-size types).
+    xml.push_str("<RecordInfo>\n");
 
     for field in fields {
         xml.push_str("\t<Field name=\"");
         xml_escape_into(&field.name, &mut xml);
-        xml.push_str("\" ");
-
-        // source attribute (Alteryx includes this)
-        xml.push_str("source=\"SigilYX\" ");
-
-        xml.push_str("type=\"");
-        xml.push_str(field.field_type.as_xml_str());
         xml.push('"');
 
-        // Size attribute (not for Bool)
+        // Attributes in alphabetical order (matching Alteryx convention):
+        //   name, scale (FixedDecimal only), size (variable/string types),
+        //   source, type
+
         match field.field_type {
-            FieldType::Bool => {}
             FieldType::FixedDecimal => {
-                let _ = write!(xml, " size=\"{}\" scale=\"{}\"", field.size, field.scale);
+                let _ = write!(xml, " scale=\"{}\" size=\"{}\"", field.scale, field.size);
             }
-            _ => {
+            FieldType::String | FieldType::WString | FieldType::VString | FieldType::VWString => {
                 let _ = write!(xml, " size=\"{}\"", field.size);
             }
+            FieldType::Blob | FieldType::SpatialObj => {
+                if field.size > 0 {
+                    let _ = write!(xml, " size=\"{}\"", field.size);
+                }
+            }
+            // Fixed-size types: Bool, Byte, Int16, Int32, Int64, Float,
+            // Double, Date, Time, DateTime — Alteryx omits size for these.
+            _ => {}
         }
 
-        xml.push_str(" />\n");
+        xml.push_str(" source=\"SigilYX\" type=\"");
+        xml.push_str(field.field_type.as_xml_str());
+        xml.push_str("\"/>\n");
     }
 
     xml.push_str("</RecordInfo>\n");
@@ -717,25 +785,23 @@ fn write_records<W: Write>(
             send_block(&mut block_buf, &raw_tx, &mut pending_blocks)?;
         }
 
-        // If a single record exceeds BLOCK_SIZE, write it directly as an
-        // uncompressed block to avoid LZF decompression buffer issues.
-        if ser_record.len() > BLOCK_SIZE && block_buf.is_empty() {
-            // Drain all pending blocks first so file_pos is accurate
-            while pending_blocks > 0 {
-                let block = done_rx
-                    .recv()
-                    .map_err(|_| YxdbError::LzfError("compression thread died".into()))?;
-                writer.write_all(&block.data)?;
-                file_pos += block.data.len() as u64;
-                pending_blocks -= 1;
+        // Append record data, splitting across block boundaries if needed.
+        // Alteryx writes records contiguously across blocks — a record may
+        // start in one block and finish in the next. We replicate this
+        // behaviour so that large records (e.g. big blobs) get compressed
+        // in standard-sized blocks rather than stored uncompressed.
+        let mut remaining = ser_record.as_slice();
+        while !remaining.is_empty() {
+            let space = BLOCK_SIZE - block_buf.len();
+            if remaining.len() <= space {
+                block_buf.extend_from_slice(remaining);
+                break;
             }
-            // Write directly as uncompressed block (high bit set)
-            let len = ser_record.len() as u32 | 0x80000000;
-            writer.write_all(&len.to_le_bytes())?;
-            writer.write_all(&ser_record)?;
-            file_pos += 4 + ser_record.len() as u64;
-        } else {
-            block_buf.extend_from_slice(&ser_record);
+            // Fill current block to capacity, then flush
+            block_buf.extend_from_slice(&remaining[..space]);
+            remaining = &remaining[space..];
+            drain_completed(writer, &done_rx, &mut file_pos, &mut pending_blocks)?;
+            send_block(&mut block_buf, &raw_tx, &mut pending_blocks)?;
         }
     }
 
