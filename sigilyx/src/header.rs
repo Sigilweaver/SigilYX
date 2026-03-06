@@ -1,4 +1,4 @@
-use crate::error::{YxdbError, Result};
+use crate::error::{Result, YxdbError};
 use crate::field::{FieldMeta, FieldType};
 
 /// YXDB file header — always 512 bytes.
@@ -113,30 +113,28 @@ pub fn parse_meta_xml(xml: &str) -> Result<Vec<FieldMeta>> {
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
                         b"name" => {
-                            name = attr.unescape_value()
-                                .map(|v| v.to_string())
-                                .unwrap_or_else(|_| String::from_utf8_lossy(&attr.value).to_string());
+                            name =
+                                attr.unescape_value()
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|_| {
+                                        String::from_utf8_lossy(&attr.value).to_string()
+                                    });
                         }
                         b"type" => {
                             type_str = String::from_utf8_lossy(&attr.value).to_string();
                         }
                         b"size" => {
-                            size = String::from_utf8_lossy(&attr.value)
-                                .parse()
-                                .unwrap_or(0);
+                            size = String::from_utf8_lossy(&attr.value).parse().unwrap_or(0);
                         }
                         b"scale" => {
-                            scale = String::from_utf8_lossy(&attr.value)
-                                .parse()
-                                .unwrap_or(0);
+                            scale = String::from_utf8_lossy(&attr.value).parse().unwrap_or(0);
                         }
                         _ => {}
                     }
                 }
 
-                let field_type = FieldType::from_xml_str(&type_str).ok_or_else(|| {
-                    YxdbError::UnsupportedFieldType(type_str.clone())
-                })?;
+                let field_type = FieldType::from_xml_str(&type_str)
+                    .ok_or_else(|| YxdbError::UnsupportedFieldType(type_str.clone()))?;
 
                 let current_offset = offset;
                 offset += field_type.fixed_bytes(size);
@@ -238,7 +236,10 @@ mod tests {
         buf[104..112].copy_from_slice(&(-1i64).to_le_bytes());
         let err = YxdbHeader::parse(&buf).unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("unreasonably large"), "unexpected error: {msg}");
+        assert!(
+            msg.contains("unreasonably large"),
+            "unexpected error: {msg}"
+        );
     }
 
     #[test]
