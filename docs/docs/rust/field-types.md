@@ -63,8 +63,8 @@ pub struct FieldMeta {
 }
 ```
 
-- `size` -- Width for fixed-size fields, maximum length for variable-length fields. For `FixedDecimal`, this is the precision.
-- `scale` -- Number of decimal places. Only meaningful for `FixedDecimal`.
+- `size` - Width for fixed-size fields, maximum length for variable-length fields. For `FixedDecimal`, this is the precision.
+- `scale` - Number of decimal places. Only meaningful for `FixedDecimal`.
 
 ## Type Details
 
@@ -74,7 +74,7 @@ Binary representation: 1 byte, where `0x00` = false, `0x01` = true, `0x02` = nul
 
 ### Integer Types (Byte, Int16, Int32, Int64)
 
-Little-endian signed integers followed by a 1-byte null indicator (`0x00` = valid, `0x01` = null). `Byte` is an unsigned 8-bit value stored in an `Int16` to accommodate the full 0--255 range.
+Little-endian signed integers followed by a 1-byte null indicator (`0x00` = valid, `0x01` = null). `Byte` is an unsigned 8-bit value stored in an `Int16` to accommodate the full 0-255 range.
 
 ### Float Types (Float, Double)
 

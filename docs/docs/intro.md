@@ -12,10 +12,10 @@ SigilYX reads and writes `.yxdb` files using [Polars](https://pola.rs/) DataFram
 
 ## Why SigilYX?
 
-- **Fast.** Rust core with parallel decompression, SIMD transcoding, and direct Arrow array construction. 1.2--3x faster than the fastest open-source C++ readers.
+- **Fast.** Rust core with parallel decompression, SIMD transcoding, and direct Arrow array construction. 1.2-3x faster than the fastest open-source C++ readers.
 - **Cross-platform.** Windows, macOS, Linux (x64 and ARM).
 - **Read and Write.** Full round-trip support for all 17 YXDB field types.
-- **Multiple output formats.** Polars, PyArrow, or Pandas -- pick the DataFrame library you already use.
+- **Multiple output formats.** Polars, PyArrow, or Pandas - pick the DataFrame library you already use.
 - **Streaming.** Batched reads with constant memory, or lazy scans with Polars LazyFrames.
 
 ## Quick Start
@@ -42,7 +42,7 @@ That's it. Jump to the [Python guide](/python) or the [Rust guide](/rust) for fu
 | Feature | Details |
 | --- | --- |
 | Rust core | Parallel LZF decompression, SIMD UTF-16 transcoding, memory-mapped I/O |
-| Polars integration | Official namespace plugin -- `pl.read_yxdb()`, `df.yxdb.write()`, lazy `pl.scan_yxdb()` |
+| Polars integration | Official namespace plugin - `pl.read_yxdb()`, `df.yxdb.write()`, lazy `pl.scan_yxdb()` |
 | PyArrow support | Zero-copy `pyarrow.Table` via Arrow C Data Interface |
 | Pandas support | `pandas.DataFrame` via PyArrow bridge |
 | Streaming | Batched reads in constant memory for arbitrarily large files |
@@ -55,9 +55,9 @@ Python bindings (via pyo3-polars) vs the pure-Python `yxdb-py` reader:
 
 | Shape | SigilYX (Polars) | yxdb-py | Speedup |
 | --- | --: | --: | --: |
-| Narrow (2 cols) | 3.3 ms | 508 ms | **153x** |
-| Mixed (8 cols) | 20.5 ms | 6,922 ms | **337x** |
-| String-heavy (5 cols) | 47.2 ms | 17,613 ms | **373x** |
+| Narrow (2 cols) | 2.8 ms | 309 ms | **111x** |
+| Mixed (8 cols) | 22.2 ms | 4,333 ms | **195x** |
+| String-heavy (5 cols) | 52.2 ms | 10,659 ms | **204x** |
 
 See the full [Performance](/performance) page for Rust-vs-C++ comparisons, methodology, and benchmark instructions.
 
@@ -69,9 +69,9 @@ SigilYX is developed as part of [Sigilweaver](https://sigilweaver.app), the visu
 
 | I want to... | Go here |
 | --- | --- |
-| Read/write YXDB in Python with Polars | [Python -- Polars](/python/polars) |
-| Read/write YXDB in Python with Pandas | [Python -- Pandas](/python/pandas) |
-| Read/write YXDB in Python with PyArrow | [Python -- PyArrow](/python/pyarrow) |
+| Read/write YXDB in Python with Polars | [Python - Polars](/python/polars) |
+| Read/write YXDB in Python with Pandas | [Python - Pandas](/python/pandas) |
+| Read/write YXDB in Python with PyArrow | [Python - PyArrow](/python/pyarrow) |
 | Stream large YXDB files in Python | [Streaming](/python/streaming) |
 | Use lazy evaluation with Polars | [Lazy Scan](/python/lazy-scan) |
 | Write YXDB files (all formats) | [Writing](/python/writing) |

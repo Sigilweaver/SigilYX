@@ -5,7 +5,33 @@ All notable changes to SigilYX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.3] - 2026-03-07
+
+### Fixed
+
+- **Writer:** LZF compressor now matches the reference liblzf implementation,
+  fixing compressed output that could differ from upstream
+- **Writer:** Improved record-boundary handling in LZF compression
+
+### Changed
+
+- **CI:** Moved compute-heavy jobs (Python tests, Linux/Windows wheel builds)
+  to WarpBuild runners for faster builds
+- **CI:** Refactored workflows to use a custom sccache composite action
+- **CI:** Updated Python testing to use `astral-sh/setup-uv` and streamlined
+  dependency installation
+- **CI:** Added sccache probing, improved error handling, and conditional
+  sccache configuration
+- **CI:** Updated `aarch64` wheel builds to use native ARM64 runner
+- **CI:** Added support for `aarch64` wheel builds with zig linker
+- **CI:** Path-based ignores for CI triggers and improved environment setup
+- **Docs:** Updated performance benchmarks (100 runs) and revised documentation
+  for clarity
+- **Tests:** Replaced test fixtures with synthetically generated data
+- **Tests:** Added geopandas support in spatial feature tests (skipped if
+  not installed)
+
+## [0.1.2] - 2026-02-26
 
 ### Fixed
 
@@ -51,6 +77,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--locked` flag on all CI cargo commands
 - Python 3.12 added to CI test matrix
 
+## [0.1.1] - 2026-02-25
+
+### Fixed
+
+- **CI:** Publish workflows now sync package version from git tag automatically,
+  removing the need to manually bump version numbers before release
+- **CI:** Crate and PyPI publish steps allow dirty builds so the in-flight
+  version rewrite does not block the build
+- **CI:** macOS x86_64 wheels cross-compiled from ARM runner instead of
+  using deprecated `macos-13` runner
+- **PyO3:** Removed unused `write_yxdb_from_ipc_spatial` import
+
 ## [0.1.0] - 2026-02-25
 
 ### Added
@@ -75,5 +113,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **YXDB format specification** documented in SPECIFICATION.md
 - **Cross-language benchmark suite** (Rust, C++, Go, C#, Python)
 
-[Unreleased]: https://github.com/sigilweaver/sigilyx/compare/v0.1.0...HEAD
+[0.1.3]: https://github.com/sigilweaver/sigilyx/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/sigilweaver/sigilyx/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/sigilweaver/sigilyx/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/sigilweaver/sigilyx/releases/tag/v0.1.0

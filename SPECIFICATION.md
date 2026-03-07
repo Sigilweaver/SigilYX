@@ -34,21 +34,23 @@ The header is a fixed 512-byte structure at the start of the file.
 
 | Offset | Size | Type | Description |
 |--------|------|------|-------------|
-| 0 | 21 | ASCII | Magic string: `"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"` (null bytes) |
-| 21 | 64 | ASCII | Description: `"Alteryx Database File"` (null-padded) |
-| 85 | 4 | u32 LE | File ID / version (observed: `1`) |
-| 89 | 4 | u32 LE | Creation date (unclear encoding) |
-| 93 | 4 | u32 LE | Flags / reserved |
-| 97 | 4 | u32 LE | Flags / reserved |
-| 101 | 4 | u32 LE | Unknown |
-| 104 | 8 | i64 LE | **Record count** (total number of records) |
-| 112 | 4 | u32 LE | Metadata size (bytes of XML following header) |
-| 116 | 4 | u32 LE | Unknown / reserved |
-| 120 | 392 | - | Padding / reserved (null bytes) |
+| 0 | 21 | ASCII | Magic string: `"Alteryx Database File"` (null-padded to 21 bytes) |
+| 21 | 43 | — | Reserved / padding |
+| 64 | 4 | u32 LE | **File ID**: `0x00440204` (no spatial index) or `0x00440205` (with spatial index) |
+| 68 | 12 | — | Reserved |
+| 80 | 4 | u32 LE | **Metadata size**: number of UTF-16 code units in the XML metadata (including null terminator). Byte length = value × 2. |
+| 84 | 4 | — | Reserved |
+| 88 | 8 | i64 LE | **Spatial index position**: file offset of the spatial index (0 if none). Only meaningful when File ID = `0x00440205`. |
+| 96 | 8 | i64 LE | **Record block index position**: file offset of the RecordBlockIndex (marks the end of compressed block data). |
+| 104 | 8 | u64 LE | **Record count**: total number of records in the file. |
+| 112 | 4 | i32 LE | **Compression version**: `0` = uncompressed (no block framing), `1` = LZF compression with block framing. |
+| 116 | 396 | — | Reserved / padding (null bytes) |
 
 **Key fields:**
-- Bytes 104-111: Record count as little-endian signed 64-bit integer
-- Bytes 112-115: Size of XML metadata section
+- Bytes 64–67: File ID determines whether a spatial index is present
+- Bytes 80–83: Metadata size (in UTF-16 code units, multiply by 2 for byte length)
+- Bytes 104–111: Record count as little-endian unsigned 64-bit integer
+- Bytes 112–115: Compression version
 
 ---
 

@@ -34,7 +34,7 @@ fn main() -> sigilyx::Result<()> {
 
 ## Sections
 
-- [Getting Started](/rust/getting-started) -- Installation, dependencies, and first program
-- [Reading](/rust/reading) -- All read APIs: eager, batched, projected, row-level
-- [Writing](/rust/writing) -- Write DataFrames and streaming writes
-- [Field Types](/rust/field-types) -- YXDB field types and their Rust/Arrow representations
+- [Getting Started](/rust/getting-started) - Installation, dependencies, and first program
+- [Reading](/rust/reading) - All read APIs: eager, batched, projected, row-level
+- [Writing](/rust/writing) - Write DataFrames and streaming writes
+- [Field Types](/rust/field-types) - YXDB field types and their Rust/Arrow representations

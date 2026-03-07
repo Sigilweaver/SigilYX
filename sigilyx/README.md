@@ -167,15 +167,15 @@ let shp = wkb_to_shp(&wkb_bytes)?;
 
 ## Performance
 
-100,000 rows, 50 runs, median. Columnar reader vs all open-source YXDB readers:
+100,000 rows, 100 runs, median. Columnar reader vs all open-source YXDB readers:
 
-| Shape | SigilYX | Best C++ | Go | .NET | vs C++ |
+| Shape | SigilYX | Best C++ | Go | .NET | vs best |
 |---|--:|--:|--:|--:|--:|
-| Narrow (2 cols) | **2.9ms** | 4.1ms | 7.8ms | 13.9ms | **1.5×** |
-| Numeric (5 cols) | **4.6ms** | 5.4ms | 10.8ms | 17.7ms | **1.2×** |
-| Mixed (8 cols) | **18.9ms** | 56.5ms | 202.7ms | 152.0ms | **3.0×** |
-| String-heavy (5 cols) | **42.4ms** | 126.5ms | 638.9ms | 287.3ms | **3.0×** |
-| Wide (50 cols) | **66.9ms** | 192.3ms | 672.2ms | 470.6ms | **2.9×** |
+| Narrow (2 cols) | **2.2ms** | 2.2ms | 4.5ms | 8.7ms | **1.0×** |
+| Numeric (5 cols) | **4.2ms** | 4.3ms | 7.2ms | 11.6ms | **1.0×** |
+| Mixed (8 cols) | **21.5ms** | 39.9ms | 130.3ms | 108.4ms | **1.9×** |
+| String-heavy (5 cols) | **52.0ms** | 85.3ms | 344.6ms | 204.6ms | **1.6×** |
+| Wide (50 cols) | **71.0ms** | 139.6ms | 439.0ms | 336.6ms | **2.0×** |
 
 See [PERFORMANCE.md](https://github.com/sigilweaver/sigilyx/blob/main/PERFORMANCE.md) for full results and methodology.
 

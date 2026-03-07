@@ -24,7 +24,7 @@ This is the fastest read path. Data transfers from Rust to Python via the Arrow 
 ### LazyFrame
 
 ```python
-# Returns a LazyFrame -- only the header is read upfront
+# Returns a LazyFrame - only the header is read upfront
 lf = pl.scan_yxdb("data.yxdb")
 
 # Data is streamed from Rust on .collect()

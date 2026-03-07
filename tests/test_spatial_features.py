@@ -20,6 +20,12 @@ import pytest
 
 import sigilyx
 
+try:
+    import geopandas  # noqa: F401
+    _has_geopandas = True
+except ImportError:
+    _has_geopandas = False
+
 TEST_DIR = Path(__file__).parent.parent / "sigilyx" / "test_files"
 
 
@@ -275,6 +281,10 @@ class TestReadYxdbGeoArrowMode:
 class TestReadYxdbGeo:
     """Test read_yxdb_geo() with GeoPandas + Shapely."""
 
+    pytestmark = pytest.mark.skipif(
+        not _has_geopandas, reason="geopandas not installed"
+    )
+
     @pytest.fixture
     def spatial_file(self, tmp_path):
         path = str(tmp_path / "geo.yxdb")
@@ -339,6 +349,10 @@ class TestReadYxdbGeo:
 
 class TestWriteYxdbGeo:
     """Test write_yxdb_geo() roundtrip with GeoPandas."""
+
+    pytestmark = pytest.mark.skipif(
+        not _has_geopandas, reason="geopandas not installed"
+    )
 
     def test_roundtrip_points(self, tmp_path):
         import geopandas as gpd

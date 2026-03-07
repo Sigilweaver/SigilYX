@@ -33,6 +33,7 @@ benchmarks/*.yxdb
 
 # Audit / scratch testing area (untracked)
 audit/
+.untracked/
 
 # Claude Code temp files
 tmpclaude-*

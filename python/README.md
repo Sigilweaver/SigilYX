@@ -162,22 +162,22 @@ n = yx.record_count("data.yxdb")
 
 ## Performance
 
-100,000 rows, 50 runs, median. SigilYX (Python) vs pure-Python yxdb-py:
+100,000 rows, 100 runs, median. SigilYX (Python) vs pure-Python yxdb-py:
 
 | Shape | SigilYX | yxdb-py | Speedup |
 |-------|--------:|--------:|--------:|
-| Narrow (2 cols) | 3.3 ms | 508 ms | **153×** |
-| Mixed (8 cols) | 20.5 ms | 6,922 ms | **337×** |
-| String-heavy (5 cols) | 47.2 ms | 17,613 ms | **373×** |
+| Narrow (2 cols) | 2.8 ms | 309 ms | **111×** |
+| Mixed (8 cols) | 22.2 ms | 4,333 ms | **195×** |
+| String-heavy (5 cols) | 52.2 ms | 10,659 ms | **204×** |
 
 SigilYX (Python) vs open-source implementations in other languages:
 
 | Shape | SigilYX | Best C++ | Go | .NET |
 |-------|--------:|---------:|---:|-----:|
-| Narrow (2 cols) | **3.3 ms** | 4.1 ms | 7.8 ms | 13.9 ms |
-| Numeric (5 cols) | **4.6 ms** | 5.4 ms | 10.8 ms | 17.7 ms |
-| Mixed (8 cols) | **20.5 ms** | 56.5 ms | 202.7 ms | 152.0 ms |
-| String-heavy (5 cols) | **47.2 ms** | 126.5 ms | 638.9 ms | 287.3 ms |
+| Narrow (2 cols) | **2.8 ms** | 2.2 ms | 4.5 ms | 8.7 ms |
+| Numeric (5 cols) | **5.1 ms** | 4.3 ms | 7.2 ms | 11.6 ms |
+| Mixed (8 cols) | **22.2 ms** | 39.9 ms | 130.3 ms | 108.4 ms |
+| String-heavy (5 cols) | **52.2 ms** | 85.3 ms | 344.6 ms | 204.6 ms |
 
 Full methodology and results: [PERFORMANCE.md](https://github.com/sigilweaver/sigilyx/blob/main/PERFORMANCE.md)
 

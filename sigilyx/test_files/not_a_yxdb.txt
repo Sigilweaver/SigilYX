@@ -1,100 +1,30 @@
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
-This is not a YXDB file
+This is not a YXDB file.
+It is used by tests to verify error handling when
+a non-YXDB file is passed to the reader.
+This is not a YXDB file.
+It is used by tests to verify error handling when
+a non-YXDB file is passed to the reader.
+This is not a YXDB file.
+It is used by tests to verify error handling when
+a non-YXDB file is passed to the reader.
+This is not a YXDB file.
+It is used by tests to verify error handling when
+a non-YXDB file is passed to the reader.
+This is not a YXDB file.
+It is used by tests to verify error handling when
+a non-YXDB file is passed to the reader.
+This is not a YXDB file.
+It is used by tests to verify error handling when
+a non-YXDB file is passed to the reader.
+This is not a YXDB file.
+It is used by tests to verify error handling when
+a non-YXDB file is passed to the reader.
+This is not a YXDB file.
+It is used by tests to verify error handling when
+a non-YXDB file is passed to the reader.
+This is not a YXDB file.
+It is used by tests to verify error handling when
+a non-YXDB file is passed to the reader.
+This is not a YXDB file.
+It is used by tests to verify error handling when
+a non-YXDB file is passed to the reader.
