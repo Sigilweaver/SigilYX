@@ -2,27 +2,27 @@
 
 ## Read Performance: Cross-Language Comparison
 
-All benchmarks: 100,000 rows, 50 runs, median time reported. Test machine: Windows 10 Pro x64, SSD, Rust release build (`lto = "fat"`, `codegen-units = 1`).
+All benchmarks: 100,000 rows, 100 runs, median time reported. Test machine: Windows 11 Pro x64, Intel i5-12500H, 16 GB RAM, NVMe SSD, Rust release build (`lto = "fat"`, `codegen-units = 1`).
 
 ### SigilYX (Rust) vs All Open-Source Readers
 
-| Shape | SigilYX Rust | NedHarding C++ | Alteryx C++ | Go | .NET | vs best C++ |
+| Shape | SigilYX Rust | NedHarding C++ | Alteryx C++ | Go | .NET | vs best |
 |---|--:|--:|--:|--:|--:|--:|
-| Narrow (2 cols, 1.4 MB) | **2.86ms** | 4.14ms | 4.86ms | 7.81ms | 13.91ms | **1.45x** |
-| Numeric (5 cols, 2.9 MB) | **4.61ms** | 5.39ms | 6.88ms | 10.79ms | 17.67ms | **1.17x** |
-| Mixed (8 cols, 16.3 MB) | **18.91ms** | 63.52ms | 56.52ms | 202.69ms | 152.03ms | **2.99x** |
-| String-heavy (5 cols, 51.3 MB) | **42.45ms** | 126.50ms | 127.71ms | 638.87ms | 287.31ms | **2.98x** |
-| Wide (50 cols, 62.2 MB) | **66.85ms** | 204.95ms | 192.26ms | 672.23ms | 470.64ms | **2.88x** |
+| Narrow (2 cols, 1.4 MB) | **2.23ms** | 2.23ms | 3.15ms | 4.53ms | 8.70ms | **1.00x** |
+| Numeric (5 cols, 2.9 MB) | **4.17ms** | 4.29ms | 5.90ms | 7.20ms | 11.63ms | **1.03x** |
+| Mixed (8 cols, 16.3 MB) | **21.51ms** | 44.78ms | 39.88ms | 130.28ms | 108.44ms | **1.85x** |
+| String-heavy (5 cols, 51.3 MB) | **52.01ms** | 85.25ms | 85.91ms | 344.57ms | 204.65ms | **1.64x** |
+| Wide (50 cols, 62.2 MB) | **71.04ms** | 149.31ms | 139.56ms | 438.97ms | 336.55ms | **1.96x** |
 
 Throughput (rows/sec):
 
 | Shape | SigilYX Rust | NedHarding C++ | Alteryx C++ | Go | .NET |
 |---|--:|--:|--:|--:|--:|
-| Narrow | 35.0M | 24.1M | 20.6M | 12.8M | 7.2M |
-| Numeric | 21.7M | 18.6M | 14.5M | 9.3M | 5.7M |
-| Mixed | 5.3M | 1.6M | 1.8M | 493K | 658K |
-| String-heavy | 2.4M | 791K | 783K | 157K | 348K |
-| Wide | 1.5M | 488K | 520K | 149K | 212K |
+| Narrow | 44.8M | 44.8M | 31.7M | 22.1M | 11.5M |
+| Numeric | 24.0M | 23.3M | 16.9M | 13.9M | 8.6M |
+| Mixed | 4.6M | 2.2M | 2.5M | 768K | 922K |
+| String-heavy | 1.9M | 1.2M | 1.2M | 290K | 489K |
+| Wide | 1.4M | 670K | 717K | 228K | 297K |
 
 ### SigilYX Row Reader vs Columnar
 
@@ -30,11 +30,11 @@ The columnar reader (default) builds a Polars DataFrame in parallel. The row rea
 
 | Shape | Columnar | Row | Columnar speedup |
 |---|--:|--:|--:|
-| Narrow | 2.86ms | 9.36ms | 3.3x |
-| Numeric | 4.61ms | 11.28ms | 2.4x |
-| Mixed | 18.91ms | 117.77ms | 6.2x |
-| String-heavy | 42.45ms | 302.99ms | 7.1x |
-| Wide | 66.85ms | 441.41ms | 6.6x |
+| Narrow | 2.23ms | 6.85ms | 3.1x |
+| Numeric | 4.17ms | 9.56ms | 2.3x |
+| Mixed | 21.51ms | 72.66ms | 3.4x |
+| String-heavy | 52.01ms | 166.38ms | 3.2x |
+| Wide | 71.04ms | 274.90ms | 3.9x |
 
 ### Python: SigilYX vs yxdb-py
 
@@ -42,11 +42,11 @@ SigilYX Python bindings use the Rust core via pyo3-polars (zero-copy Arrow C Dat
 
 | Shape | Polars | Arrow | Pandas | Row | yxdb-py | vs yxdb-py |
 |---|--:|--:|--:|--:|--:|--:|
-| Narrow | **3.32ms** | 5.64ms | 6.94ms | 29.87ms | 508.35ms | **153x** |
-| Numeric | **5.63ms** | 9.59ms | 11.43ms | 38.47ms | 541.36ms | **96x** |
-| Mixed | **20.52ms** | 38.37ms | 41.68ms | 160.68ms | 6,922ms | **337x** |
-| String-heavy | **47.22ms** | 102.18ms | 111.65ms | 335.00ms | 17,613ms | **373x** |
-| Wide | **76.72ms** | 172.00ms | 193.89ms | 606.55ms | 22,523ms | **294x** |
+| Narrow | **2.79ms** | 2.83ms | 3.75ms | 18.56ms | 308.53ms | **111x** |
+| Numeric | **5.12ms** | 5.24ms | 6.32ms | 26.62ms | 362.03ms | **71x** |
+| Mixed | **22.21ms** | 24.60ms | 26.95ms | 120.59ms | 4,333ms | **195x** |
+| String-heavy | **52.25ms** | 59.36ms | 62.13ms | 224.13ms | 10,659ms | **204x** |
+| Wide | **74.01ms** | 79.76ms | 89.67ms | 411.91ms | 14,019ms | **189x** |
 
 ---
 
@@ -88,26 +88,26 @@ All files contain 100,000 rows generated deterministically (seed=42).
 
 ### Read Pipeline
 
-1. **Memory-mapped I/O** -- File data is memory-mapped (no heap copy)
-2. **Parallel decompression** -- LZF block boundaries parsed, then all blocks decompressed in parallel (Rayon)
-3. **Block compaction** -- Decompressed blocks compacted into a contiguous buffer
-4. **Record boundary scan** -- Walk the buffer to locate record starts (arithmetic for fixed-size, sequential for variable-length)
-5. **Parallel column build** -- Build Polars Series in parallel, one task per column, using direct Arrow array construction (value buffer + validity bitmap, no `Vec<Option<T>>` intermediate)
+1. **Memory-mapped I/O** - File data is memory-mapped (no heap copy)
+2. **Parallel decompression** - LZF block boundaries parsed, then all blocks decompressed in parallel (Rayon)
+3. **Block compaction** - Decompressed blocks compacted into a contiguous buffer
+4. **Record boundary scan** - Walk the buffer to locate record starts (arithmetic for fixed-size, sequential for variable-length)
+5. **Parallel column build** - Build Polars Series in parallel, one task per column, using direct Arrow array construction (value buffer + validity bitmap, no `Vec<Option<T>>` intermediate)
 
 ### Write Pipeline
 
-1. **Record serialization** -- Fixed + variable-length records built from DataFrame columns
-2. **Pipelined compression** -- Background thread compresses blocks via `mpsc::sync_channel` while the main thread serializes the next block
-3. **Sequential I/O** -- Compressed blocks written in order for block index tracking
+1. **Record serialization** - Fixed + variable-length records built from DataFrame columns
+2. **Pipelined compression** - Background thread compresses blocks via `mpsc::sync_channel` while the main thread serializes the next block
+3. **Sequential I/O** - Compressed blocks written in order for block index tracking
 
 ### Key Optimizations
 
-- **Memory-mapped I/O** -- Avoids heap allocation for file data
-- **C LZF FFI** -- Decompression uses the liblzf C library compiled with `-O3`
-- **SIMD UTF-16 transcoding** -- SSE2-accelerated ASCII-path for UTF-16-to-UTF-8 conversion
-- **Direct Arrow arrays** -- Numeric columns built as raw value buffer + validity bitmap, bypassing `Vec<Option<T>>`
-- **pyo3-polars** -- Zero-copy Python bridge via the Arrow C Data Interface
-- **Pipelined writes** -- Compression overlaps with serialization on a background thread
+- **Memory-mapped I/O** - Avoids heap allocation for file data
+- **C LZF FFI** - Decompression uses the liblzf C library compiled with `-O3`
+- **SIMD UTF-16 transcoding** - SSE2-accelerated ASCII-path for UTF-16-to-UTF-8 conversion
+- **Direct Arrow arrays** - Numeric columns built as raw value buffer + validity bitmap, bypassing `Vec<Option<T>>`
+- **pyo3-polars** - Zero-copy Python bridge via the Arrow C Data Interface
+- **Pipelined writes** - Compression overlaps with serialization on a background thread
 
 ---
 
@@ -184,10 +184,10 @@ python benchmarks/generate_benchmark_data.py --per-type
 python benchmarks/generate_benchmark_data.py --giant
 
 # Cross-language benchmark (auto-detects available toolchains)
-python benchmarks/benchmark_cross_language.py --runs 50
+python benchmarks/benchmark_cross_language.py --runs 100
 
 # Python-only benchmark (SigilYX formats + yxdb-py)
-python benchmarks/benchmark_python_formats.py --runs 50
+python benchmarks/benchmark_python_formats.py --runs 100
 
 # Per-type read benchmark (all 17 YXDB field types)
 python benchmarks/read_per_type.py
@@ -218,12 +218,13 @@ See [benchmarks/METHODOLOGY.md](benchmarks/METHODOLOGY.md) for detailed statisti
 
 ## Test Environment
 
-- **OS:** Windows 10 Pro x64
-- **CPU:** (results are relative; absolute times depend on hardware)
+- **OS:** Windows 11 Pro x64
+- **CPU:** Intel Core i5-12500H (12C/16T)
+- **RAM:** 16 GB DDR4
 - **Storage:** NVMe SSD
-- **Python:** 3.11.9
-- **Rust:** 1.86 (release, `lto = "fat"`, `codegen-units = 1`)
-- **Polars:** 1.38 (Python) / 0.46 (Rust)
+- **Python:** 3.13.12
+- **Rust:** 1.93.1 (release, `lto = "fat"`, `codegen-units = 1`)
+- **Polars:** 1.38.0
 - **Go:** latest stable
 - **.NET:** 8.0
 - **C++:** MSVC 2022 (cl.exe, `/O2`)
