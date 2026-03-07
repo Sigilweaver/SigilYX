@@ -71,7 +71,7 @@ The benchmark outputs JSON with per-target timing data. Key things to look for:
 
 - **Median vs Mean**: If they differ significantly, outliers are present. Trust the median.
 - **CV (coefficient of variation)**: Values > 0.10 suggest inconsistent results. Try increasing `--runs` or ensuring the machine is idle.
-- **Columnar vs Row**: The columnar reader should be 3--7x faster than the row reader. If not, something may be wrong with parallelism (check thread count).
+- **Columnar vs Row**: The columnar reader should be 3-7x faster than the row reader. If not, something may be wrong with parallelism (check thread count).
 
 ## Environment Setup
 

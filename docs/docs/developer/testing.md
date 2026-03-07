@@ -70,7 +70,7 @@ This reads test files with both SigilYX and the C++ readers and verifies that th
 
 ## Test Data
 
-Test files live in `sigilyx/test_files/`. These are small YXDB files covering various field type combinations. Benchmark data (100K rows) is generated separately -- see [Benchmarks](/developer/benchmarks).
+Test files live in `sigilyx/test_files/`. These are small YXDB files covering various field type combinations. Benchmark data (100K rows) is generated separately - see [Benchmarks](/developer/benchmarks).
 
 ## Adding Tests
 

@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # PyArrow
 
-SigilYX can produce PyArrow Tables directly. This is useful if you're working in the Arrow ecosystem -- for example, writing to Parquet, feeding data into DuckDB, or bridging to other Arrow-compatible tools.
+SigilYX can produce PyArrow Tables directly. This is useful if you're working in the Arrow ecosystem - for example, writing to Parquet, feeding data into DuckDB, or bridging to other Arrow-compatible tools.
 
 ## Installation
 

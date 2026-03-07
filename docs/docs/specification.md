@@ -38,11 +38,11 @@ The header is a fixed 512-byte structure at the start of the file.
 | 104 | 8 | i64 LE | **Record count** |
 | 112 | 4 | u32 LE | **Metadata size** (bytes of XML) |
 | 116 | 4 | u32 LE | Reserved |
-| 120 | 392 | -- | Padding |
+| 120 | 392 | - | Padding |
 
 The two key fields are:
-- **Bytes 104--111**: Record count as little-endian signed 64-bit integer
-- **Bytes 112--115**: Size of the XML metadata section that follows
+- **Bytes 104-111**: Record count as little-endian signed 64-bit integer
+- **Bytes 112-115**: Size of the XML metadata section that follows
 
 ## XML Metadata
 
@@ -127,12 +127,12 @@ Each block is independently decompressible, which enables SigilYX's parallel dec
 1. Write 512-byte header placeholder (zeros)
 2. Build and write UTF-16LE XML metadata
 3. Serialize records into blocks; compress each with LZF; write compressed blocks
-4. Seek back to header and write final record count (bytes 104--111) and metadata size (bytes 112--115)
+4. Seek back to header and write final record count (bytes 104-111) and metadata size (bytes 112-115)
 
 ## References
 
-- [Alteryx/OpenYXDB](https://github.com/alteryx/OpenYXDB) -- C++ implementation by Alteryx
-- [NedHarding/Open_AlteryxYXDB](https://github.com/AlteryxNed/Open_AlteryxYXDB) -- C++ implementation (GPL-3.0)
-- [yxdb-go](https://github.com/tlarsendataguy-yxdb/yxdb-go) -- Go implementation (MIT)
-- [yxdb-py](https://github.com/tlarsendataguy-yxdb/yxdb-py) -- Python implementation (MIT)
-- [yxdb-net](https://github.com/tlarsendataguy-yxdb/yxdb-net) -- .NET implementation (MIT)
+- [Alteryx/OpenYXDB](https://github.com/alteryx/OpenYXDB) - C++ implementation by Alteryx
+- [NedHarding/Open_AlteryxYXDB](https://github.com/AlteryxNed/Open_AlteryxYXDB) - C++ implementation (GPL-3.0)
+- [yxdb-go](https://github.com/tlarsendataguy-yxdb/yxdb-go) - Go implementation (MIT)
+- [yxdb-py](https://github.com/tlarsendataguy-yxdb/yxdb-py) - Python implementation (MIT)
+- [yxdb-net](https://github.com/tlarsendataguy-yxdb/yxdb-net) - .NET implementation (MIT)

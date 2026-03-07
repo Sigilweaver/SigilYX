@@ -87,9 +87,9 @@ sigilyx/                    # Workspace root
 
 Recommended extensions:
 
-- **rust-analyzer** -- Rust language support
-- **Python** -- Python language support
-- **Even Better TOML** -- TOML syntax highlighting
+- **rust-analyzer** - Rust language support
+- **Python** - Python language support
+- **Even Better TOML** - TOML syntax highlighting
 
 ### Cargo Check
 

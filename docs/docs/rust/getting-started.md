@@ -76,7 +76,7 @@ match read_yxdb("missing.yxdb", SpatialMode::Raw) {
 
 The `sigilyx` crate enables the following Polars features by default:
 
-- `lazy` -- LazyFrame support
-- `dtype-date`, `dtype-datetime`, `dtype-time` -- Temporal types
-- `dtype-decimal` -- Fixed-point decimals
-- `ipc` -- Arrow IPC serialization (used for cross-language interop)
+- `lazy` - LazyFrame support
+- `dtype-date`, `dtype-datetime`, `dtype-time` - Temporal types
+- `dtype-decimal` - Fixed-point decimals
+- `ipc` - Arrow IPC serialization (used for cross-language interop)

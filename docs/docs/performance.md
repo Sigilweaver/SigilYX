@@ -5,39 +5,39 @@ description: "Benchmark results for SigilYX vs C++, Go, .NET, and Python YXDB re
 
 # Performance
 
-All benchmarks: 100,000 rows, 50 runs, median time reported. Test machine: Windows 10 Pro x64, NVMe SSD, Rust release build (`lto = "fat"`, `codegen-units = 1`).
+All benchmarks: 100,000 rows, 100 runs, median time reported. Test machine: Windows 11 Pro x64, Intel i5-12500H, 16 GB RAM, NVMe SSD, Rust release build (`lto = "fat"`, `codegen-units = 1`).
 
 ## Rust: SigilYX vs All Open-Source Readers
 
-| Shape | SigilYX (Rust) | NedHarding C++ | Alteryx C++ | Go | .NET | vs best C++ |
+| Shape | SigilYX (Rust) | NedHarding C++ | Alteryx C++ | Go | .NET | vs best |
 | --- | --: | --: | --: | --: | --: | --: |
-| Narrow (2 cols, 1.4 MB) | **2.86 ms** | 4.14 ms | 4.86 ms | 7.81 ms | 13.91 ms | **1.45x** |
-| Numeric (5 cols, 2.9 MB) | **4.61 ms** | 5.39 ms | 6.88 ms | 10.79 ms | 17.67 ms | **1.17x** |
-| Mixed (8 cols, 16.3 MB) | **18.91 ms** | 63.52 ms | 56.52 ms | 202.69 ms | 152.03 ms | **2.99x** |
-| String-heavy (5 cols, 51.3 MB) | **42.45 ms** | 126.50 ms | 127.71 ms | 638.87 ms | 287.31 ms | **2.98x** |
-| Wide (50 cols, 62.2 MB) | **66.85 ms** | 204.95 ms | 192.26 ms | 672.23 ms | 470.64 ms | **2.88x** |
+| Narrow (2 cols, 1.4 MB) | **2.23 ms** | 2.23 ms | 3.15 ms | 4.53 ms | 8.70 ms | **1.00x** |
+| Numeric (5 cols, 2.9 MB) | **4.17 ms** | 4.29 ms | 5.90 ms | 7.20 ms | 11.63 ms | **1.03x** |
+| Mixed (8 cols, 16.3 MB) | **21.51 ms** | 44.78 ms | 39.88 ms | 130.28 ms | 108.44 ms | **1.85x** |
+| String-heavy (5 cols, 51.3 MB) | **52.01 ms** | 85.25 ms | 85.91 ms | 344.57 ms | 204.65 ms | **1.64x** |
+| Wide (50 cols, 62.2 MB) | **71.04 ms** | 149.31 ms | 139.56 ms | 438.97 ms | 336.55 ms | **1.96x** |
 
 ### Throughput (rows/sec)
 
 | Shape | SigilYX (Rust) | NedHarding C++ | Alteryx C++ | Go | .NET |
 | --- | --: | --: | --: | --: | --: |
-| Narrow | 35.0M | 24.1M | 20.6M | 12.8M | 7.2M |
-| Numeric | 21.7M | 18.6M | 14.5M | 9.3M | 5.7M |
-| Mixed | 5.3M | 1.6M | 1.8M | 493K | 658K |
-| String-heavy | 2.4M | 791K | 783K | 157K | 348K |
-| Wide | 1.5M | 488K | 520K | 149K | 212K |
+| Narrow | 44.8M | 44.8M | 31.7M | 22.1M | 11.5M |
+| Numeric | 24.0M | 23.3M | 16.9M | 13.9M | 8.6M |
+| Mixed | 4.6M | 2.2M | 2.5M | 768K | 922K |
+| String-heavy | 1.9M | 1.2M | 1.2M | 290K | 489K |
+| Wide | 1.4M | 670K | 717K | 228K | 297K |
 
-The advantage grows with schema complexity. For string-heavy and wide files, SigilYX's parallel column build and SIMD UTF-16 transcoding provide a nearly 3x advantage over the best C++ reader.
+The advantage grows with schema complexity. For string-heavy and wide files, SigilYX's parallel column build and SIMD UTF-16 transcoding provide a ~2x advantage over the best C++ reader.
 
 ## Columnar vs Row Reader
 
 | Shape | Columnar | Row | Columnar speedup |
 | --- | --: | --: | --: |
-| Narrow | 2.86 ms | 9.36 ms | 3.3x |
-| Numeric | 4.61 ms | 11.28 ms | 2.4x |
-| Mixed | 18.91 ms | 117.77 ms | 6.2x |
-| String-heavy | 42.45 ms | 302.99 ms | 7.1x |
-| Wide | 66.85 ms | 441.41 ms | 6.6x |
+| Narrow | 2.23 ms | 6.85 ms | 3.1x |
+| Numeric | 4.17 ms | 9.56 ms | 2.3x |
+| Mixed | 21.51 ms | 72.66 ms | 3.4x |
+| String-heavy | 52.01 ms | 166.38 ms | 3.2x |
+| Wide | 71.04 ms | 274.90 ms | 3.9x |
 
 Use the columnar reader (default) unless you need row-level control.
 
@@ -47,15 +47,15 @@ SigilYX Python bindings use the Rust core via pyo3-polars (zero-copy Arrow C Dat
 
 | Shape | Polars | Arrow | Pandas | Row | yxdb-py | vs yxdb-py |
 | --- | --: | --: | --: | --: | --: | --: |
-| Narrow | **3.32 ms** | 5.64 ms | 6.94 ms | 29.87 ms | 508.35 ms | **153x** |
-| Numeric | **5.63 ms** | 9.59 ms | 11.43 ms | 38.47 ms | 541.36 ms | **96x** |
-| Mixed | **20.52 ms** | 38.37 ms | 41.68 ms | 160.68 ms | 6,922 ms | **337x** |
-| String-heavy | **47.22 ms** | 102.18 ms | 111.65 ms | 335.00 ms | 17,613 ms | **373x** |
-| Wide | **76.72 ms** | 172.00 ms | 193.89 ms | 606.55 ms | 22,523 ms | **294x** |
+| Narrow | **2.79 ms** | 2.83 ms | 3.75 ms | 18.56 ms | 308.53 ms | **111x** |
+| Numeric | **5.12 ms** | 5.24 ms | 6.32 ms | 26.62 ms | 362.03 ms | **71x** |
+| Mixed | **22.21 ms** | 24.60 ms | 26.95 ms | 120.59 ms | 4,333 ms | **195x** |
+| String-heavy | **52.25 ms** | 59.36 ms | 62.13 ms | 224.13 ms | 10,659 ms | **204x** |
+| Wide | **74.01 ms** | 79.76 ms | 89.67 ms | 411.91 ms | 14,019 ms | **189x** |
 
 ### Python Format Comparison
 
-For the Polars path, the Rust-to-Python overhead is ~0.5 ms (the Arrow C Data Interface is virtually free). The Arrow and Pandas paths add serialization overhead but remain 96--373x faster than the pure-Python alternative.
+For the Polars path, the Rust-to-Python overhead is ~0.5 ms (the Arrow C Data Interface is virtually free). The Arrow and Pandas paths add serialization overhead but remain 71-204x faster than the pure-Python alternative.
 
 ## Why Is It Fast?
 

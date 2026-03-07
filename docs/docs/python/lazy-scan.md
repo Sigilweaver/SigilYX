@@ -4,7 +4,7 @@ sidebar_position: 6
 
 # Lazy Scan
 
-SigilYX integrates with Polars' lazy evaluation engine. A lazy scan reads only the YXDB header upfront -- the actual data is streamed from Rust when you call `.collect()`.
+SigilYX integrates with Polars' lazy evaluation engine. A lazy scan reads only the YXDB header upfront - the actual data is streamed from Rust when you call `.collect()`.
 
 ## Basic Usage
 
@@ -69,7 +69,7 @@ For a 50-column file where you only need 2 columns, this is dramatically faster 
 ## Row-Limit Pushdown
 
 ```python
-# Reading stops after 100 rows -- the rest of the file is never touched
+# Reading stops after 100 rows - the rest of the file is never touched
 preview = pl.scan_yxdb("big_file.yxdb").head(100).collect()
 ```
 
@@ -84,7 +84,7 @@ import sigilyx
 yxdb_data = pl.scan_yxdb("legacy.yxdb")
 parquet_data = pl.scan_parquet("modern.parquet")
 
-# Join across formats -- everything stays lazy until .collect()
+# Join across formats - everything stays lazy until .collect()
 result = (
     yxdb_data
     .join(parquet_data, on="customer_id", how="inner")
@@ -100,6 +100,6 @@ result = (
 | --- | --- |
 | Small files (< 100 MB) | Eager `pl.read_yxdb()` is simpler |
 | Large files, need all columns | Eager or streaming batches |
-| Large files, need few columns | Lazy `pl.scan_yxdb()` -- projection pushdown shines |
-| Preview / sampling | Lazy with `.head()` -- row-limit pushdown |
-| Complex multi-source pipelines | Lazy -- let Polars optimize the plan |
+| Large files, need few columns | Lazy `pl.scan_yxdb()` - projection pushdown shines |
+| Preview / sampling | Lazy with `.head()` - row-limit pushdown |
+| Complex multi-source pipelines | Lazy - let Polars optimize the plan |

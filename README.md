@@ -58,23 +58,23 @@ write_yxdb("output.yxdb", &df, &[])?;
 
 ## Performance
 
-100,000 rows, 50 runs, median. SigilYX columnar reader vs all open-source YXDB readers:
+100,000 rows, 100 runs, median. SigilYX columnar reader vs all open-source YXDB readers:
 
-| Shape | SigilYX | Best C++ | Go | .NET | vs C++ |
-|-------|--------:|---------:|---:|-----:|-------:|
-| Narrow (2 cols) | **2.9 ms** | 4.1 ms | 7.8 ms | 13.9 ms | **1.5×** |
-| Numeric (5 cols) | **4.6 ms** | 5.4 ms | 10.8 ms | 17.7 ms | **1.2×** |
-| Mixed (8 cols) | **18.9 ms** | 56.5 ms | 202.7 ms | 152.0 ms | **3.0×** |
-| String-heavy (5 cols) | **42.4 ms** | 126.5 ms | 638.9 ms | 287.3 ms | **3.0×** |
-| Wide (50 cols) | **66.9 ms** | 192.3 ms | 672.2 ms | 470.6 ms | **2.9×** |
+| Shape | SigilYX | Best C++ | Go | .NET | vs best |
+|-------|--------:|---------:|---:|-----:|--------:|
+| Narrow (2 cols) | **2.2 ms** | 2.2 ms | 4.5 ms | 8.7 ms | **1.0×** |
+| Numeric (5 cols) | **4.2 ms** | 4.3 ms | 7.2 ms | 11.6 ms | **1.0×** |
+| Mixed (8 cols) | **21.5 ms** | 39.9 ms | 130.3 ms | 108.4 ms | **1.9×** |
+| String-heavy (5 cols) | **52.0 ms** | 85.3 ms | 344.6 ms | 204.6 ms | **1.6×** |
+| Wide (50 cols) | **71.0 ms** | 139.6 ms | 439.0 ms | 336.6 ms | **2.0×** |
 
 Python (SigilYX) vs pure-Python yxdb-py:
 
 | Shape | SigilYX | yxdb-py | Speedup |
 |-------|--------:|--------:|--------:|
-| Narrow | 3.3 ms | 508 ms | **153×** |
-| Mixed | 20.5 ms | 6,922 ms | **337×** |
-| String-heavy | 47.2 ms | 17,613 ms | **373×** |
+| Narrow | 2.8 ms | 309 ms | **111×** |
+| Mixed | 22.2 ms | 4,333 ms | **195×** |
+| String-heavy | 52.2 ms | 10,659 ms | **204×** |
 
 See [PERFORMANCE.md](PERFORMANCE.md) for full results and methodology.
 

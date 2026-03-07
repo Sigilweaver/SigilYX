@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Python Guide
 
-SigilYX provides first-class Python bindings for reading and writing YXDB files. The Rust core does the heavy lifting -- your Python code gets native performance with zero-copy data transfer.
+SigilYX provides first-class Python bindings for reading and writing YXDB files. The Rust core does the heavy lifting - your Python code gets native performance with zero-copy data transfer.
 
 ## Supported Output Formats
 
@@ -51,13 +51,13 @@ Both approaches use the same Rust reader. The Polars plugin API is syntactically
 
 ## Next Steps
 
-- [Installation](/python/installation) -- Requirements and optional extras
-- [Polars](/python/polars) -- Full Polars integration guide
-- [Pandas](/python/pandas) -- Working with Pandas DataFrames
-- [PyArrow](/python/pyarrow) -- Arrow Tables and interop
-- [Streaming](/python/streaming) -- Batched reads for large files
-- [Lazy Scan](/python/lazy-scan) -- Deferred execution with LazyFrames
-- [Writing](/python/writing) -- All write paths including streaming batch writes
-- [Metadata](/python/metadata) -- Inspect file structure without reading data
-- [Spatial & GeoArrow](/python/spatial) -- Geospatial data, GeoArrow, and GeoPandas
-- [Row Reader](/python/row-reader) -- Row-by-row iteration
+- [Installation](/python/installation) - Requirements and optional extras
+- [Polars](/python/polars) - Full Polars integration guide
+- [Pandas](/python/pandas) - Working with Pandas DataFrames
+- [PyArrow](/python/pyarrow) - Arrow Tables and interop
+- [Streaming](/python/streaming) - Batched reads for large files
+- [Lazy Scan](/python/lazy-scan) - Deferred execution with LazyFrames
+- [Writing](/python/writing) - All write paths including streaming batch writes
+- [Metadata](/python/metadata) - Inspect file structure without reading data
+- [Spatial & GeoArrow](/python/spatial) - Geospatial data, GeoArrow, and GeoPandas
+- [Row Reader](/python/row-reader) - Row-by-row iteration

@@ -8,7 +8,7 @@ description: "Iterate over YXDB records one row at a time with the Python row re
 SigilYX provides a `YxdbRowReader` class for iterating over YXDB records one at a time. This is useful for streaming processing where you don't need a columnar DataFrame, or when working with custom processing pipelines.
 
 :::tip
-The columnar reader (`read_yxdb()`) is significantly faster than row-by-row iteration -- see [Performance](/performance). Use the row reader only when you need per-record control or cannot hold even a single batch in memory.
+The columnar reader (`read_yxdb()`) is significantly faster than row-by-row iteration - see [Performance](/performance). Use the row reader only when you need per-record control or cannot hold even a single batch in memory.
 :::
 
 ## Basic Usage

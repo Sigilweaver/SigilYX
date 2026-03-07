@@ -17,7 +17,7 @@ Complete reference for all 17 YXDB field types, their binary encoding, and how S
 | Arrow type | `BooleanArray` |
 | Polars type | `Boolean` |
 
-No separate null indicator byte -- the value byte encodes both value and nullability.
+No separate null indicator byte - the value byte encodes both value and nullability.
 
 ## Byte
 
@@ -29,7 +29,7 @@ No separate null indicator byte -- the value byte encodes both value and nullabi
 | Arrow type | `Int16Array` |
 | Polars type | `Int16` |
 
-Stored as `Int16` (not `UInt8`) to accommodate the full 0--255 range without ambiguity.
+Stored as `Int16` (not `UInt8`) to accommodate the full 0-255 range without ambiguity.
 
 ## Int16
 
