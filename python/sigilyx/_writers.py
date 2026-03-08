@@ -105,12 +105,22 @@ def _prepare_df_for_ipc(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def _is_pyo3_compat_error(exc: TypeError) -> bool:
-    """Check if a TypeError is from a pyo3-polars version mismatch."""
+    """Check if a TypeError is from a pyo3-polars version mismatch.
+
+    A pyo3 conversion error occurs at the FFI boundary and has no
+    Python-level traceback frames (``__traceback__.tb_next is None``).
+    We combine this structural check with keyword matching to avoid
+    false positives from user-code TypeErrors that happen to mention
+    similar words.
+    """
+    # pyo3 conversion errors have no Python-level traceback frames
+    tb = exc.__traceback__
+    is_ffi_boundary = tb is not None and tb.tb_next is None
+
     msg = str(exc)
-    # pyo3-polars compat_level mismatch surfaces as one of:
-    #   - explicit "compat_level" mention
-    #   - "cannot be converted" from pyo3 type conversion failure
-    return "compat_level" in msg or "cannot be converted" in msg
+    has_compat_keyword = "compat_level" in msg or "cannot be converted" in msg
+
+    return is_ffi_boundary and has_compat_keyword
 
 
 def write_yxdb(
@@ -252,9 +262,11 @@ def write_yxdb_arrow(path: Union[str, Path], table: "pyarrow.Table") -> None:
 def sink_yxdb(path: Union[str, Path], lf: pl.LazyFrame) -> None:
     """Write a Polars LazyFrame to an Alteryx YXDB file.
 
-    This collects the LazyFrame and writes the result to YXDB.
-    For very large datasets that don't fit in memory, consider using
-    ``write_yxdb_batches`` with a batched data source instead.
+    Uses Polars' streaming engine when available to reduce peak memory
+    during query execution (beneficial for joins, aggregations, and
+    other operations with large intermediate results).  Falls back to
+    eager collection when the streaming engine is unavailable or the
+    query plan is not supported.
 
     Parameters
     ----------
@@ -273,13 +285,31 @@ def sink_yxdb(path: Union[str, Path], lf: pl.LazyFrame) -> None:
 
     Notes
     -----
-    Unlike Polars' native ``sink_parquet`` which streams data directly to disk,
-    this function collects the LazyFrame first because YXDB format requires
-    knowing the record count before writing the header. For datasets larger
-    than available RAM, use chunked processing with ``write_yxdb_batches``.
+    The YXDB streaming writer (``YxdbWriter``) supports deferred header
+    patching, so the record count does not need to be known upfront.
+    For datasets larger than available RAM, consider chunked processing
+    with ``write_yxdb_batches`` instead.
     """
-    df = lf.collect()
+    if not isinstance(lf, pl.LazyFrame):
+        raise TypeError(
+            f"sink_yxdb expects a polars.LazyFrame, got {type(lf).__name__}. "
+            f"Use write_yxdb() for DataFrames."
+        )
+
+    df = _collect_streaming(lf)
     write_yxdb(path, df)
+
+
+def _collect_streaming(lf: pl.LazyFrame) -> pl.DataFrame:
+    """Collect a LazyFrame using the streaming engine when possible.
+
+    Falls back to eager ``collect()`` if the streaming engine is not
+    available or the query plan does not support it.
+    """
+    try:
+        return lf.collect(engine="streaming")
+    except Exception:
+        return lf.collect()
 
 
 def write_yxdb_batches(

@@ -1,14 +1,14 @@
 # sigilyx
 
-*High-performance YXDB reader and writer for Python — 150–370× faster than yxdb-py.*
+*High-performance YXDB reader and writer for Python.*
 
 [![PyPI](https://img.shields.io/pypi/v/sigilyx)](https://pypi.org/project/sigilyx/)
 [![Python](https://img.shields.io/pypi/pyversions/sigilyx)](https://pypi.org/project/sigilyx/)
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](https://github.com/sigilweaver/sigilyx/blob/main/LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](https://github.com/Sigilweaver/sigilyx/blob/main/LICENSE)
 
-YXDB is the native binary format used by [Alteryx](https://www.alteryx.com/). `sigilyx` reads and writes `.yxdb` files using [Polars](https://pola.rs/) DataFrames, [PyArrow](https://arrow.apache.org/docs/python/) Tables, or [Pandas](https://pandas.pydata.org/) DataFrames.
+YXDB is the native binary format used by [Alteryx](https://www.alteryx.com/) Designer. `sigilyx` reads and writes `.yxdb` files using [Polars](https://pola.rs/) DataFrames, [PyArrow](https://arrow.apache.org/docs/python/) Tables, or [Pandas](https://pandas.pydata.org/) DataFrames.
 
-The core is written in Rust — parallel LZF decompression, SIMD UTF-16→UTF-8 transcoding, direct Arrow array construction. No native Alteryx installation required.
+The core is written in Rust — parallel LZF decompression, SIMD UTF-16→UTF-8 transcoding, direct Arrow array construction. No native Alteryx Designer installation required.
 
 ## Installation
 
@@ -179,16 +179,16 @@ SigilYX (Python) vs open-source implementations in other languages:
 | Mixed (8 cols) | **22.2 ms** | 39.9 ms | 130.3 ms | 108.4 ms |
 | String-heavy (5 cols) | **52.2 ms** | 85.3 ms | 344.6 ms | 204.6 ms |
 
-Full methodology and results: [PERFORMANCE.md](https://github.com/sigilweaver/sigilyx/blob/main/PERFORMANCE.md)
+Full methodology and results: [PERFORMANCE.md](https://github.com/Sigilweaver/sigilyx/blob/main/PERFORMANCE.md)
 
 ## Links
 
-- **GitHub:** https://github.com/sigilweaver/sigilyx
+- **GitHub:** https://github.com/Sigilweaver/sigilyx
 - **Documentation:** https://sigilweaver.app/sigilyx/
 - **Rust crate (crates.io):** https://crates.io/crates/sigilyx
-- **Changelog:** https://github.com/sigilweaver/sigilyx/blob/main/CHANGELOG.md
-- **Issues:** https://github.com/sigilweaver/sigilyx/issues
+- **Changelog:** https://github.com/Sigilweaver/sigilyx/blob/main/CHANGELOG.md
+- **Issues:** https://github.com/Sigilweaver/sigilyx/issues
 
 ## License
 
-[GNU Affero General Public License v3.0](https://github.com/sigilweaver/sigilyx/blob/main/LICENSE) (AGPL-3.0-only).
+[GNU Affero General Public License v3.0](https://github.com/Sigilweaver/sigilyx/blob/main/LICENSE) (AGPL-3.0-only).
