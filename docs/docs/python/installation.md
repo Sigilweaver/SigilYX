@@ -58,7 +58,7 @@ Building from source requires the Rust toolchain:
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Clone and build
-git clone https://github.com/sigilweaver/sigilyx.git
+git clone https://github.com/Sigilweaver/sigilyx.git
 cd sigilyx
 python -m venv .venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows

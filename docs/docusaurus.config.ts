@@ -86,7 +86,7 @@ const config: Config = {
           position: 'right',
         },
         {
-          href: 'https://github.com/sigilweaver/sigilyx',
+          href: 'https://github.com/Sigilweaver/sigilyx',
           label: 'GitHub',
           position: 'right',
         },
@@ -134,11 +134,11 @@ const config: Config = {
           items: [
             {
               label: 'GitHub',
-              href: 'https://github.com/sigilweaver/sigilyx',
+              href: 'https://github.com/Sigilweaver/sigilyx',
             },
             {
               label: 'GitHub Discussions',
-              href: 'https://github.com/sigilweaver/sigilweaver/discussions',
+              href: 'https://github.com/Sigilweaver/Sigilweaver/discussions',
             },
           ],
         },
@@ -147,7 +147,7 @@ const config: Config = {
           items: [
             {
               label: 'License (AGPL-3.0)',
-              href: 'https://github.com/sigilweaver/sigilyx/blob/main/LICENSE',
+              href: 'https://github.com/Sigilweaver/sigilyx/blob/main/LICENSE',
             },
             {
               label: 'Terms of Use',

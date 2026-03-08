@@ -23,6 +23,7 @@ import os
 import struct
 import subprocess
 import tempfile
+import warnings
 from pathlib import Path
 
 import polars as pl
@@ -39,11 +40,20 @@ ALTERYX_DUMP_EXE = BENCHMARK_DIR / "cpp" / "alteryx_openyxdb_dump.exe"
 TEST_FILES_DIR = PROJECT_ROOT / "sigilyx" / "test_files"
 
 # Skip everything if the C++ dump tool isn't built
+_DUMP_TOOL_MISSING = not ALTERYX_DUMP_EXE.exists()
 pytestmark = pytest.mark.skipif(
-    not ALTERYX_DUMP_EXE.exists(),
+    _DUMP_TOOL_MISSING,
     reason=f"Alteryx OpenYXDB dump tool not found at {ALTERYX_DUMP_EXE}. "
            f"Build with: benchmarks\\cpp\\build_alteryx_dump.bat",
 )
+
+# Warn once when running locally (not CI) without the dump tool
+if _DUMP_TOOL_MISSING and not os.environ.get("CI"):
+    warnings.warn(
+        f"Alteryx cross-implementation tests skipped: dump tool not found at "
+        f"{ALTERYX_DUMP_EXE}. Build with: benchmarks\\cpp\\build_alteryx_dump.bat",
+        stacklevel=1,
+    )
 
 
 def _yxdb(name: str) -> str:

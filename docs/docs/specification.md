@@ -5,7 +5,7 @@ description: "Reference specification for the YXDB binary file format, including
 
 # YXDB File Format Specification
 
-This is a reference specification for the YXDB binary file format, derived from existing open-source implementations.
+This is a reference specification for the YXDB binary file format. Specification derived from open-source implementations; implementation is original.
 
 ## Overview
 

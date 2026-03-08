@@ -16,7 +16,7 @@ sidebar_position: 2
 ## Setup
 
 ```bash
-git clone https://github.com/sigilweaver/sigilyx.git
+git clone https://github.com/Sigilweaver/sigilyx.git
 cd sigilyx
 
 # Create a Python virtual environment

@@ -97,7 +97,7 @@ sigilyx/
 Requires [Rust](https://rustup.rs/) and Python 3.9+.
 
 ```bash
-git clone https://github.com/sigilweaver/sigilyx.git
+git clone https://github.com/Sigilweaver/sigilyx.git
 cd sigilyx
 python -m venv .venv
 .venv\Scripts\activate      # Windows
@@ -127,4 +127,4 @@ See [benchmarks/README.md](benchmarks/README.md) for the full cross-language ben
 
 [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only).
 
-Format specification derived from existing open-source implementations — see [SPECIFICATION.md](SPECIFICATION.md) for references.
+Format specification derived from open-source implementations; implementation is original. See [SPECIFICATION.md](SPECIFICATION.md) for references.
