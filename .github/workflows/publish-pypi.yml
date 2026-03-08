@@ -17,8 +17,58 @@ env:
   SCCACHE_GHA_ENABLED: true
 
 jobs:
+  # ── Cross-platform test gate ────────────────────────────────────────
+  # Full matrix runs only before release — not on every push.
+  test-matrix:
+    name: Test (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: warp-ubuntu-latest-x64-4x
+            rust-test: true
+            python-test: true
+            activate: source .venv/bin/activate
+          - name: Windows x64
+            os: warp-windows-latest-x64-4x
+            rust-test: true
+            python-test: true
+            activate: source .venv/Scripts/activate
+          - name: macOS ARM64
+            os: macos-latest
+            rust-test: true
+            python-test: true
+            activate: source .venv/bin/activate
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-sccache
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ matrix.os }}
+
+      - name: Rust tests
+        if: matrix.rust-test
+        run: cargo test -p sigilyx --locked
+
+      - uses: astral-sh/setup-uv@v5
+        if: matrix.python-test
+
+      - name: Python tests
+        if: matrix.python-test
+        shell: bash
+        run: |
+          uv venv --python 3.12
+          ${{ matrix.activate }}
+          uv pip install maturin polars pyarrow pandas pytest
+          maturin develop --release
+          pytest tests/ -v
+
   build-sdist:
     name: Build sdist
+    needs: test-matrix
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +98,7 @@ jobs:
 
   build-wheels:
     name: Build wheel (${{ matrix.os }}, ${{ matrix.target }})
+    needs: test-matrix
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
