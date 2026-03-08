@@ -5,7 +5,7 @@ We welcome contributions! This page covers the essentials — see the full [Cont
 ## Quick Start
 
 ```bash
-git clone https://github.com/sigilweaver/sigilyx.git
+git clone https://github.com/Sigilweaver/sigilyx.git
 cd sigilyx
 python -m venv .venv
 
@@ -19,7 +19,7 @@ maturin develop --release
 
 ## Before You Start
 
-1. Check [GitHub Issues](https://github.com/sigilweaver/sigilyx/issues) for existing reports
+1. Check [GitHub Issues](https://github.com/Sigilweaver/sigilyx/issues) for existing reports
 2. For significant changes, open an issue first to discuss the approach
 
 ## Code Style

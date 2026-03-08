@@ -11,7 +11,7 @@ Add `sigilyx` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sigilyx = { git = "https://github.com/sigilweaver/sigilyx.git" }
+sigilyx = { git = "https://github.com/Sigilweaver/sigilyx.git" }
 ```
 
 SigilYX depends on Polars (for DataFrame output) and links against a vendored C LZF library (compiled automatically via `build.rs`).

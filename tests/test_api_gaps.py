@@ -118,6 +118,182 @@ class TestSinkYxdb:
         df = sigilyx.read_yxdb(path)
         assert df.columns == ["a", "c"]
 
+    def test_sink_roundtrip_matches_write(self, tmp_path):
+        """sink_yxdb produces identical output to collect + write_yxdb."""
+        lf = pl.LazyFrame({
+            "id": list(range(100)),
+            "val": [float(x) * 1.1 for x in range(100)],
+            "label": [f"row_{x}" for x in range(100)],
+        })
+        sink_path = str(tmp_path / "via_sink.yxdb")
+        write_path = str(tmp_path / "via_write.yxdb")
+        sigilyx.sink_yxdb(sink_path, lf)
+        sigilyx.write_yxdb(write_path, lf.collect())
+        df_sink = sigilyx.read_yxdb(sink_path)
+        df_write = sigilyx.read_yxdb(write_path)
+        assert df_sink.equals(df_write)
+
+    def test_sink_with_group_by(self, tmp_path):
+        """Aggregation queries work through sink_yxdb."""
+        lf = pl.LazyFrame({
+            "category": ["a", "b", "a", "b", "a"],
+            "value": [10, 20, 30, 40, 50],
+        }).group_by("category").agg(pl.col("value").sum())
+        path = str(tmp_path / "sink_groupby.yxdb")
+        sigilyx.sink_yxdb(path, lf)
+        df = sigilyx.read_yxdb(path)
+        assert df.shape[0] == 2
+        result = dict(zip(df["category"].to_list(), df["value"].to_list()))
+        assert result["a"] == 90
+        assert result["b"] == 60
+
+    def test_sink_with_join(self, tmp_path):
+        """Join queries work through sink_yxdb."""
+        left = pl.LazyFrame({"id": [1, 2, 3], "name": ["Alice", "Bob", "Charlie"]})
+        right = pl.LazyFrame({"id": [2, 3, 4], "score": [85, 92, 78]})
+        lf = left.join(right, on="id", how="inner")
+        path = str(tmp_path / "sink_join.yxdb")
+        sigilyx.sink_yxdb(path, lf)
+        df = sigilyx.read_yxdb(path)
+        assert df.shape == (2, 3)
+        assert set(df["id"].to_list()) == {2, 3}
+
+    def test_sink_with_sort(self, tmp_path):
+        """Sort operations work through sink_yxdb."""
+        lf = pl.LazyFrame({"x": [3, 1, 4, 1, 5]}).sort("x")
+        path = str(tmp_path / "sink_sort.yxdb")
+        sigilyx.sink_yxdb(path, lf)
+        df = sigilyx.read_yxdb(path)
+        assert df["x"].to_list() == [1, 1, 3, 4, 5]
+
+    def test_sink_with_expressions(self, tmp_path):
+        """Computed columns via expressions work through sink_yxdb."""
+        lf = pl.LazyFrame({"a": [1, 2, 3]}).with_columns(
+            (pl.col("a") * 2).alias("doubled"),
+            (pl.col("a").cast(pl.String) + "_suffix").alias("text"),
+        )
+        path = str(tmp_path / "sink_expr.yxdb")
+        sigilyx.sink_yxdb(path, lf)
+        df = sigilyx.read_yxdb(path)
+        assert df["doubled"].to_list() == [2, 4, 6]
+        assert df["text"].to_list() == ["1_suffix", "2_suffix", "3_suffix"]
+
+    def test_sink_all_numeric_types(self, tmp_path):
+        """All numeric types roundtrip correctly through sink_yxdb."""
+        lf = pl.LazyFrame({
+            "i32": pl.Series([1, 2, None], dtype=pl.Int32),
+            "i64": pl.Series([10, 20, None], dtype=pl.Int64),
+            "f32": pl.Series([1.5, 2.5, None], dtype=pl.Float32),
+            "f64": pl.Series([1.1, 2.2, None], dtype=pl.Float64),
+            "bool": pl.Series([True, False, None], dtype=pl.Boolean),
+        })
+        path = str(tmp_path / "sink_types.yxdb")
+        sigilyx.sink_yxdb(path, lf)
+        df = sigilyx.read_yxdb(path)
+        assert df["i32"].to_list() == [1, 2, None]
+        assert df["i64"].to_list() == [10, 20, None]
+        assert df["bool"].to_list() == [True, False, None]
+
+    def test_sink_with_nulls(self, tmp_path):
+        """Null values are preserved through sink_yxdb."""
+        lf = pl.LazyFrame({
+            "s": ["hello", None, "world"],
+            "n": [1, None, 3],
+        })
+        path = str(tmp_path / "sink_nulls.yxdb")
+        sigilyx.sink_yxdb(path, lf)
+        df = sigilyx.read_yxdb(path)
+        assert df["s"].to_list() == ["hello", None, "world"]
+        assert df["n"].to_list() == [1, None, 3]
+
+    def test_sink_empty_lazyframe(self, tmp_path):
+        """An empty LazyFrame produces a valid 0-row YXDB file."""
+        lf = pl.LazyFrame({"x": pl.Series([], dtype=pl.Int64)})
+        path = str(tmp_path / "sink_empty.yxdb")
+        sigilyx.sink_yxdb(path, lf)
+        assert sigilyx.record_count(path) == 0
+        df = sigilyx.read_yxdb(path)
+        assert df.shape == (0, 1)
+        assert df.columns == ["x"]
+
+    def test_sink_large_dataset(self, tmp_path):
+        """Larger dataset roundtrips correctly (multiple LZF blocks)."""
+        n = 100_000
+        lf = pl.LazyFrame({
+            "id": list(range(n)),
+            "val": [float(x) for x in range(n)],
+        })
+        path = str(tmp_path / "sink_large.yxdb")
+        sigilyx.sink_yxdb(path, lf)
+        df = sigilyx.read_yxdb(path)
+        assert df.shape == (n, 2)
+        assert df["id"][0] == 0
+        assert df["id"][-1] == n - 1
+
+    def test_sink_with_dates_and_strings(self, tmp_path):
+        """Date and string columns roundtrip through sink_yxdb."""
+        lf = pl.LazyFrame({
+            "d": pl.Series([
+                datetime.date(2025, 1, 15),
+                datetime.date(2000, 6, 1),
+            ]),
+            "s": ["café", "日本語"],
+        })
+        path = str(tmp_path / "sink_datestr.yxdb")
+        sigilyx.sink_yxdb(path, lf)
+        df = sigilyx.read_yxdb(path)
+        assert df["d"].to_list() == [
+            datetime.date(2025, 1, 15),
+            datetime.date(2000, 6, 1),
+        ]
+        assert df["s"].to_list() == ["café", "日本語"]
+
+    def test_sink_rejects_non_lazyframe(self):
+        """sink_yxdb raises TypeError for non-LazyFrame input."""
+        with pytest.raises(TypeError, match="LazyFrame"):
+            sigilyx.sink_yxdb("out.yxdb", pl.DataFrame({"a": [1]}))
+
+    def test_sink_rejects_string_input(self):
+        """sink_yxdb raises TypeError for string input."""
+        with pytest.raises(TypeError, match="LazyFrame"):
+            sigilyx.sink_yxdb("out.yxdb", "not_a_lazyframe")
+
+    def test_sink_chained_operations(self, tmp_path):
+        """A complex chain of lazy operations works end-to-end."""
+        lf = (
+            pl.LazyFrame({
+                "name": ["Alice", "Bob", "Charlie", "Alice", "Bob"],
+                "score": [90, 85, 92, 88, 95],
+            })
+            .filter(pl.col("score") >= 88)
+            .group_by("name")
+            .agg(pl.col("score").mean().alias("avg_score"))
+            .sort("name")
+        )
+        path = str(tmp_path / "sink_chain.yxdb")
+        sigilyx.sink_yxdb(path, lf)
+        df = sigilyx.read_yxdb(path)
+        assert df["name"].to_list() == ["Alice", "Bob", "Charlie"]
+
+    def test_sink_namespace_plugin(self, tmp_path):
+        """The lf.yxdb.sink() namespace API calls sink_yxdb internally."""
+        lf = pl.LazyFrame({"v": [10, 20, 30]})
+        path = str(tmp_path / "sink_ns.yxdb")
+        lf.yxdb.sink(path)
+        df = sigilyx.read_yxdb(path)
+        assert df["v"].to_list() == [10, 20, 30]
+
+    def test_sink_from_scan_yxdb(self, tmp_path):
+        """Roundtrip: scan_yxdb → filter → sink_yxdb."""
+        src = _yxdb("People.yxdb")
+        lf = sigilyx.scan_yxdb(src)
+        path = str(tmp_path / "sink_rescan.yxdb")
+        sigilyx.sink_yxdb(path, lf)
+        df_orig = sigilyx.read_yxdb(src)
+        df_copy = sigilyx.read_yxdb(path)
+        assert df_orig.shape == df_copy.shape
+        assert df_orig.columns == df_copy.columns
+
 
 # ============================================================================
 #  pathlib.Path arguments

@@ -8,7 +8,7 @@ We welcome contributions to SigilYX. This page covers the process and convention
 
 ## Before You Start
 
-1. Check the [GitHub Issues](https://github.com/sigilweaver/sigilyx/issues) for existing reports or discussion
+1. Check the [GitHub Issues](https://github.com/Sigilweaver/sigilyx/issues) for existing reports or discussion
 2. For significant changes, open an issue first to discuss the approach
 
 ## Development Setup
