@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{BufWriter, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
 
@@ -119,6 +119,11 @@ pub struct YxdbWriter<W: Write + Seek> {
     ser_var_fixups: Vec<(usize, usize)>,
     ser_record: Vec<u8>,
     ser_utf16_buf: Vec<u8>,
+    /// Path to the output file (set for file-backed writers only).
+    /// Used to clean up partial files on Drop without finish().
+    output_path: Option<PathBuf>,
+    /// Set to true by finish() so Drop knows not to clean up.
+    finished: bool,
 }
 
 impl YxdbWriter<BufWriter<File>> {
@@ -141,6 +146,7 @@ impl YxdbWriter<BufWriter<File>> {
         fields: &[FieldMeta],
         compression: CompressionAlgorithm,
     ) -> Result<Self> {
+        let output_path = path.as_ref().to_path_buf();
         let file = File::create(path.as_ref())?;
         let mut writer = BufWriter::new(file);
 
@@ -180,6 +186,8 @@ impl YxdbWriter<BufWriter<File>> {
             ser_var_fixups: Vec::with_capacity(if has_var { fields.len() } else { 0 }),
             ser_record: Vec::with_capacity(fixed_size + if has_var { 1024 } else { 0 }),
             ser_utf16_buf: Vec::with_capacity(if has_var { 256 } else { 0 }),
+            output_path: Some(output_path),
+            finished: false,
         })
     }
 }
@@ -287,6 +295,8 @@ impl<W: Write + Seek> YxdbWriter<W> {
     /// file with an incorrect record count in the header.
     #[must_use = "call .finish() to write a valid YXDB — dropping the writer without finishing produces a corrupt file"]
     pub fn finish(mut self) -> Result<()> {
+        self.finished = true;
+
         // Flush any remaining data
         self.flush_block()?;
 
@@ -320,14 +330,20 @@ impl<W: Write + Seek> YxdbWriter<W> {
 
 impl<W: Write + Seek> Drop for YxdbWriter<W> {
     fn drop(&mut self) {
-        if self.record_count > 0 && !self.block_buf.is_empty() {
-            // Best-effort flush of remaining data. If finish() was not called,
-            // the file will have an incorrect record count in the header.
-            eprintln!(
-                "warning: YxdbWriter dropped without calling finish() — \
-                 the output file will have an incorrect record count"
-            );
-            let _ = self.flush_block();
+        if self.finished {
+            return;
+        }
+        eprintln!(
+            "warning: YxdbWriter dropped without calling finish() — \
+             the output file is incomplete and will be removed"
+        );
+        // Best-effort removal of the incomplete file.
+        // On Unix this works even with the file handle still open.
+        // On Windows the file handle is still held by self.writer so
+        // remove_file will fail; the file is left behind but has an
+        // invalid header (record count = 0) making it obviously corrupt.
+        if let Some(ref path) = self.output_path {
+            let _ = std::fs::remove_file(path);
         }
     }
 }

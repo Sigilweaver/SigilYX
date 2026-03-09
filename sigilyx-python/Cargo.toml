@@ -5,7 +5,7 @@ edition = "2021"
 description = "Python bindings for SigilYX — high-performance YXDB reader and writer"
 license = "AGPL-3.0-only"
 authors = ["Sigilweaver"]
-repository = "https://github.com/sigilweaver/sigilyx"
+repository = "https://github.com/Sigilweaver/sigilyx"
 publish = false
 
 [lib]

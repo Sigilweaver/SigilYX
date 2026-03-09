@@ -6,7 +6,7 @@ All benchmarks: 100,000 rows, 100 runs, median time reported. Test machine: Wind
 
 ### SigilYX (Rust) vs All Open-Source Readers
 
-| Shape | SigilYX Rust | NedHarding C++ | Alteryx C++ | Go | .NET | vs best |
+| Shape | SigilYX Rust | NedHarding C++ | OpenYXDB C++ | Go | .NET | vs best |
 |---|--:|--:|--:|--:|--:|--:|
 | Narrow (2 cols, 1.4 MB) | **2.23ms** | 2.23ms | 3.15ms | 4.53ms | 8.70ms | **1.00x** |
 | Numeric (5 cols, 2.9 MB) | **4.17ms** | 4.29ms | 5.90ms | 7.20ms | 11.63ms | **1.03x** |
@@ -16,7 +16,7 @@ All benchmarks: 100,000 rows, 100 runs, median time reported. Test machine: Wind
 
 Throughput (rows/sec):
 
-| Shape | SigilYX Rust | NedHarding C++ | Alteryx C++ | Go | .NET |
+| Shape | SigilYX Rust | NedHarding C++ | OpenYXDB C++ | Go | .NET |
 |---|--:|--:|--:|--:|--:|
 | Narrow | 44.8M | 44.8M | 31.7M | 22.1M | 11.5M |
 | Numeric | 24.0M | 23.3M | 16.9M | 13.9M | 8.6M |
@@ -64,7 +64,7 @@ SigilYX Python bindings use the Rust core via pyo3-polars (zero-copy Arrow C Dat
 | yxdb-go | Go | `yxdb-go` | Go structs |
 | yxdb-net | C# (.NET 8) | NuGet `yxdb` | .NET objects |
 | nedharding-openyxdb | C++ | Open_AlteryxYXDB | C++ typed values |
-| alteryx-openyxdb | C++ | Alteryx OpenYXDB | C++ typed values |
+| alteryx-openyxdb | C++ | OpenYXDB (Alteryx) | C++ typed values |
 
 ---
 
@@ -147,7 +147,7 @@ Key takeaways:
 
 ## Streaming: Larger-Than-RAM Processing
 
-Demonstrates `scan_yxdb()` and `read_yxdb_batches()` processing a file that **exceeds available RAM** with constant memory overhead — a capability no other YXDB library offers.
+Demonstrates `scan_yxdb()` and `read_yxdb_batches()` processing a file that **exceeds available RAM** with constant memory overhead.
 
 **Setup:** 32.5 GB file (90 M rows × 20 mixed-type columns) on a machine with 11.9 GB available / 16.9 GB total RAM.
 
@@ -163,11 +163,10 @@ WHERE  i32_a > 0
 | **sigilyx-scan** | ✓ | **52.6s** | **0.62** | **1.1 GB** | `scan_yxdb()` + Polars streaming engine |
 | **sigilyx-batches** | ✓ | **53.5s** | **0.61** | **1.1 GB** | `read_yxdb_batches()` + Python loop |
 | sigilyx-full-read | ✗ DNF | — | — | — | `read()` — OOM (needs 32+ GB) |
-| Any full-materialising library | ✗ DNF | — | — | — | Must load entire file into RAM |
 
-**Headline:** 32.5 GB file processed in 52.6 seconds using only 1.1 GB peak RAM (3.4% of file size). Any library that calls the equivalent of `read()` on this file will OOM.
+**Headline:** 32.5 GB file processed in 52.6 seconds using only 1.1 GB peak RAM (3.4% of file size).
 
-> **Note on Alteryx OpenYXDB C++:** The Alteryx OpenYXDB library provides only a row-by-row reader with no batching or streaming API. While it uses O(1) memory per row, it cannot perform vectorised queries and would process this file orders of magnitude slower than the Polars streaming engine. The Alteryx Designer desktop application handles large files by compressing/swapping to disk, but that capability is not exposed in the open-source library.
+> **Note:** The open-source C++ readers (OpenYXDB, Open_AlteryxYXDB) provide row-by-row APIs with O(1) memory per row, but no batching or vectorised query interface. SigilYX's streaming mode combines constant-memory reading with Polars' vectorised engine.
 
 ---
 
