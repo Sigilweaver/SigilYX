@@ -6,7 +6,7 @@ rust-version = "1.75"
 description = "High-performance, standalone reader/writer for Alteryx .yxdb files."
 license = "AGPL-3.0-only"
 authors = ["Sigilweaver"]
-repository = "https://github.com/sigilweaver/sigilyx"
+repository = "https://github.com/Sigilweaver/sigilyx"
 homepage = "https://sigilweaver.app/sigilyx/"
 documentation = "https://docs.rs/sigilyx"
 readme = "README.md"
@@ -15,7 +15,7 @@ categories = ["parser-implementations", "encoding", "science"]
 exclude = ["test_files/"]
 
 [dependencies]
-polars = { version = "0.53", features = ["lazy", "dtype-date", "dtype-datetime", "dtype-time", "dtype-decimal", "dtype-duration", "ipc", "parquet"] }
+polars = { version = "0.53", features = ["dtype-date", "dtype-datetime", "dtype-time", "dtype-decimal", "dtype-duration", "dtype-i8", "dtype-i16", "ipc"] }
 quick-xml = "0.39"
 thiserror = "2"
 rayon = "1.10"

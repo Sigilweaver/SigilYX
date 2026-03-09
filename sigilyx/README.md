@@ -177,7 +177,7 @@ let shp = wkb_to_shp(&wkb_bytes)?;
 | String-heavy (5 cols) | **52.0ms** | 85.3ms | 344.6ms | 204.6ms | **1.6×** |
 | Wide (50 cols) | **71.0ms** | 139.6ms | 439.0ms | 336.6ms | **2.0×** |
 
-See [PERFORMANCE.md](https://github.com/sigilweaver/sigilyx/blob/main/PERFORMANCE.md) for full results and methodology.
+See [PERFORMANCE.md](https://github.com/Sigilweaver/sigilyx/blob/main/PERFORMANCE.md) for full results and methodology.
 
 ## Architecture
 
@@ -193,4 +193,4 @@ See [PERFORMANCE.md](https://github.com/sigilweaver/sigilyx/blob/main/PERFORMANC
 
 ## License
 
-AGPL-3.0-only. See [LICENSE](https://github.com/sigilweaver/sigilyx/blob/main/LICENSE).
+AGPL-3.0-only. See [LICENSE](https://github.com/Sigilweaver/sigilyx/blob/main/LICENSE).

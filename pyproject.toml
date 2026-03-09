@@ -33,10 +33,10 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://sigilweaver.app/sigilyx/"
-Repository = "https://github.com/sigilweaver/sigilyx"
+Repository = "https://github.com/Sigilweaver/sigilyx"
 Documentation = "https://sigilweaver.app/sigilyx/"
-Issues = "https://github.com/sigilweaver/sigilyx/issues"
-Changelog = "https://github.com/sigilweaver/sigilyx/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Sigilweaver/sigilyx/issues"
+Changelog = "https://github.com/Sigilweaver/sigilyx/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 arrow = ["pyarrow>=14.0"]

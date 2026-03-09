@@ -1,6 +1,6 @@
 # YXDB File Format Specification
 
-*Based on existing open-source YXDB implementations, especially [Alteryx/OpenYXDB](https://github.com/alteryx/OpenYXDB).*
+*Specification derived from open-source YXDB implementations; implementation is original.*
 
 ---
 
