@@ -3,7 +3,7 @@ name = "sigilyx"
 version = "0.0.0"
 edition = "2021"
 rust-version = "1.75"
-description = "High-performance, standalone reader/writer for Alteryx .yxdb files."
+description = "High-performance, standalone reader/writer for Alteryx .yxdb (E1) files."
 license = "AGPL-3.0-only"
 authors = ["Sigilweaver"]
 repository = "https://github.com/Sigilweaver/sigilyx"
@@ -15,11 +15,21 @@ categories = ["parser-implementations", "encoding", "science"]
 exclude = ["test_files/"]
 
 [dependencies]
-polars = { version = "0.53", features = ["dtype-date", "dtype-datetime", "dtype-time", "dtype-decimal", "dtype-duration", "dtype-i8", "dtype-i16", "ipc"] }
+polars = { version = "0.53", features = [
+    "dtype-date",
+    "dtype-datetime",
+    "dtype-time",
+    "dtype-decimal",
+    "dtype-duration",
+    "dtype-i8",
+    "dtype-i16",
+    "ipc",
+] }
 quick-xml = "0.39"
 thiserror = "2"
 rayon = "1.10"
 memmap2 = "0.9"
+snap = "1"
 arrow = { version = "0.53", package = "polars-arrow", default-features = false }
 
 [build-dependencies]

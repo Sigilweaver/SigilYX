@@ -20,6 +20,11 @@ pub enum FieldValue {
     Time(Option<String>),     // "HH:MM:SS"
     DateTime(Option<String>), // "YYYY-MM-DD HH:MM:SS"
     Blob(Option<Vec<u8>>),
+    /// Internal sentinel for E2 blob references (offset, length into blob_data).
+    /// The reader resolves these to `Blob(Some(data))` or `String(Some(text))`
+    /// before returning. Never exposed to consumers.
+    #[doc(hidden)]
+    BlobRef(usize, usize),
 }
 
 /// Extract a field's value by column index.

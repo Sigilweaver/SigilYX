@@ -6,10 +6,10 @@ use std::thread;
 
 use polars::prelude::*;
 
+use super::header::HEADER_SIZE;
+use super::lzf::{self, CompressionAlgorithm};
 use crate::error::{Result, YxdbError};
 use crate::field::{FieldMeta, FieldType};
-use crate::header::HEADER_SIZE;
-use crate::lzf::{self, CompressionAlgorithm};
 
 /// Maximum uncompressed block size before flushing to disk.
 /// Matches the reader's default buffer: 256 KiB.
@@ -1505,7 +1505,7 @@ mod tests {
         write_yxdb(path, &df, &[]).unwrap();
 
         // Read it back
-        let df2 = read_yxdb(path, SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(path, SpatialMode::Raw, false).unwrap();
 
         // Compare
         assert_eq!(df2.height(), 3);
@@ -1546,7 +1546,7 @@ mod tests {
         let path = tmp.path();
         write_yxdb(path, &df, &[]).unwrap();
 
-        let df2 = read_yxdb(path, SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(path, SpatialMode::Raw, false).unwrap();
         assert_eq!(df2.height(), 3);
 
         let val_col = df2.column("val").unwrap();
@@ -1574,7 +1574,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df2.height(), 3);
         assert_eq!(df2.width(), 7);
 
@@ -1642,7 +1642,7 @@ mod tests {
         }
 
         // Read back and verify
-        let df = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df.height(), 5);
         assert_eq!(df.width(), 2);
 
@@ -1689,7 +1689,7 @@ mod tests {
             writer.finish().unwrap();
         }
 
-        let df = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df.height(), 1000);
 
         let values: Vec<i64> = df
@@ -1786,7 +1786,7 @@ mod tests {
         .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df2.height(), 1);
         assert_eq!(df2.column("a").unwrap().i32().unwrap().get(0), Some(42));
         assert_eq!(df2.column("b").unwrap().str().unwrap().get(0), Some("only"));
@@ -1802,7 +1802,7 @@ mod tests {
         let df = test_df(vec![s]);
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df2.column("n").unwrap().null_count(), 3);
     }
 
@@ -1818,7 +1818,7 @@ mod tests {
         .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let vals: Vec<&str> = df2
             .column("s")
             .unwrap()
@@ -1841,7 +1841,7 @@ mod tests {
         let df = test_df(vec![s]);
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let col = df2.column("s").unwrap().str().unwrap();
         assert_eq!(col.get(0), Some("hi"));
         assert_eq!(col.get(1), Some(""));
@@ -1864,7 +1864,7 @@ mod tests {
         .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(
             df2.column("i16").unwrap().i16().unwrap().get(0),
             Some(i16::MIN)
@@ -1903,7 +1903,7 @@ mod tests {
         .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let col = df2.column("f64").unwrap().f64().unwrap();
         assert_eq!(col.get(0), Some(f64::INFINITY));
         assert_eq!(col.get(1), Some(f64::NEG_INFINITY));
@@ -1926,7 +1926,7 @@ mod tests {
         let df = test_df(vec![s]);
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let col = df2.column("b").unwrap().bool().unwrap();
         assert_eq!(col.get(0), Some(true));
         assert_eq!(col.get(1), Some(false));
@@ -1954,7 +1954,7 @@ mod tests {
         .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let col = df2.column("text").unwrap().str().unwrap();
         assert_eq!(col.get(0), Some("Hello"));
         assert_eq!(col.get(1), Some("café"));
@@ -1977,7 +1977,7 @@ mod tests {
         .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(
             df2.column("s").unwrap().str().unwrap().get(0),
             Some(long_str.as_str())
@@ -1996,7 +1996,7 @@ mod tests {
         let df = test_df(cols);
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df2.width(), 50);
         assert_eq!(df2.height(), 1);
         for i in 0..50 {
@@ -2026,7 +2026,7 @@ mod tests {
         ]);
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df2.height(), n as usize);
         assert_eq!(df2.column("id").unwrap().i64().unwrap().get(0), Some(0));
         assert_eq!(
@@ -2048,7 +2048,7 @@ mod tests {
         let df = test_df(vec![s]);
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let col = df2.column("v").unwrap().i32().unwrap();
         for i in 0..100 {
             assert_eq!(col.get(i as usize), vals[i as usize]);
@@ -2076,7 +2076,7 @@ mod tests {
             assert_eq!(writer.record_count(), 2);
             writer.finish().unwrap();
         }
-        let df = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df.height(), 2);
     }
 
@@ -2095,7 +2095,7 @@ mod tests {
         for _ in 0..5 {
             let tmp = NamedTempFile::new().unwrap();
             write_yxdb(tmp.path(), &df, &[]).unwrap();
-            df = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+            df = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         }
         let ids: Vec<i32> = df
             .column("id")
@@ -2201,7 +2201,7 @@ mod tests {
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df2.height(), 4);
         assert_eq!(df2.column("t").unwrap().dtype(), &DataType::Time);
         // Extract physical i64 values to verify Time roundtrip
@@ -2234,7 +2234,7 @@ mod tests {
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df2.height(), 5);
         let col = df2.column("d").unwrap().date().unwrap();
         assert_eq!(col.phys.get(0), Some(0));
@@ -2268,7 +2268,7 @@ mod tests {
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let col = df2.column("b").unwrap().binary().unwrap();
         assert_eq!(col.get(0).unwrap().len(), 0);
         assert_eq!(col.get(1).unwrap(), &[0x42]);
@@ -2297,7 +2297,7 @@ mod tests {
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let col = df2.column("s").unwrap().str().unwrap();
         for (i, expected) in owned.iter().enumerate() {
             assert_eq!(
@@ -2320,7 +2320,7 @@ mod tests {
         .unwrap();
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let col = df2.column("s").unwrap().str().unwrap();
         assert_eq!(col.get(0), Some("😀"));
         assert_eq!(col.get(1), Some("🎉🚀💻"));
@@ -2341,7 +2341,7 @@ mod tests {
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df2.width(), 200);
         assert_eq!(df2.height(), 2);
         // Verify first and last columns
@@ -2365,7 +2365,7 @@ mod tests {
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df2.height(), n as usize);
         let col = df2.column("id").unwrap().i64().unwrap();
         assert_eq!(col.get(0), Some(0));
@@ -2391,7 +2391,7 @@ mod tests {
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df2.height(), 3);
         for col_name in df2.get_column_names().into_iter() {
             assert_eq!(
@@ -2464,7 +2464,7 @@ mod tests {
 
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let names: Vec<&str> = df2
             .get_column_names()
             .into_iter()
@@ -2535,7 +2535,7 @@ mod tests {
             assert_eq!(writer.record_count(), 3);
             writer.finish().unwrap();
         }
-        let df = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df.height(), 3);
         let vals: Vec<i32> = df
             .column("x")
@@ -2620,7 +2620,7 @@ mod tests {
         write_yxdb(tmp.path(), &df, &["geom"]).unwrap();
 
         // Read back in Wkb mode — should get WKB bytes back
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb, false).unwrap();
         assert_eq!(df2.height(), 2);
         assert_eq!(df2.width(), 2);
 
@@ -2656,8 +2656,8 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["geom"]).unwrap();
 
-        let df_wkb = read_yxdb(tmp.path(), SpatialMode::Wkb).unwrap();
-        let df_geo = read_yxdb(tmp.path(), SpatialMode::GeoArrow).unwrap();
+        let df_wkb = read_yxdb(tmp.path(), SpatialMode::Wkb, false).unwrap();
+        let df_geo = read_yxdb(tmp.path(), SpatialMode::GeoArrow, false).unwrap();
 
         // Both should produce identical WKB output
         let wkb_col = df_wkb.column("geom").unwrap().binary().unwrap();
@@ -2686,7 +2686,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["geom"]).unwrap();
 
-        let df_raw = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df_raw = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let raw_col = df_raw.column("geom").unwrap().binary().unwrap();
         let raw0 = raw_col.get(0).unwrap();
         // In raw mode, should be SHP format (starts with shape type i32 = 1 for Point)
@@ -2718,7 +2718,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["geom"]).unwrap();
 
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb, false).unwrap();
         assert_eq!(df2.height(), 3);
 
         let geom_col = df2.column("geom").unwrap().binary().unwrap();
@@ -2750,7 +2750,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["line"]).unwrap();
 
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb, false).unwrap();
         let col = df2.column("line").unwrap().binary().unwrap();
         let wkb2 = col.get(0).unwrap();
 
@@ -2783,7 +2783,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["poly"]).unwrap();
 
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb, false).unwrap();
         let col = df2.column("poly").unwrap().binary().unwrap();
         let wkb2 = col.get(0).unwrap();
 
@@ -2818,7 +2818,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["pts"]).unwrap();
 
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb, false).unwrap();
         let col = df2.column("pts").unwrap().binary().unwrap();
         let wkb2 = col.get(0).unwrap();
 
@@ -2885,7 +2885,7 @@ mod tests {
         assert_eq!(names, vec!["origin", "dest"]);
 
         // Read back and verify both columns are decoded
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb, false).unwrap();
         assert_eq!(df2.width(), 3);
 
         for col_name in &["origin", "dest"] {
@@ -2947,9 +2947,9 @@ mod tests {
         for entry in std::fs::read_dir(&test_dir).unwrap() {
             let path = entry.unwrap().path();
             if path.extension().map(|e| e == "yxdb").unwrap_or(false) {
-                let df_raw = read_yxdb(&path, SpatialMode::Raw).unwrap();
-                let df_wkb = read_yxdb(&path, SpatialMode::Wkb).unwrap();
-                let df_geo = read_yxdb(&path, SpatialMode::GeoArrow).unwrap();
+                let df_raw = read_yxdb(&path, SpatialMode::Raw, false).unwrap();
+                let df_wkb = read_yxdb(&path, SpatialMode::Wkb, false).unwrap();
+                let df_geo = read_yxdb(&path, SpatialMode::GeoArrow, false).unwrap();
                 // All modes should produce the same shape
                 assert_eq!(
                     df_raw.shape(),
@@ -3004,7 +3004,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["geom"]).unwrap();
 
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb, false).unwrap();
         let geom_col = df2.column("geom").unwrap().binary().unwrap();
 
         for (i, &(expected_x, expected_y)) in coords.iter().enumerate() {
@@ -3044,9 +3044,9 @@ mod tests {
         write_yxdb(tmp.path(), &df, &["geom"]).unwrap();
 
         // All three modes should produce valid IPC bytes
-        let ipc_raw = read_yxdb_to_ipc(tmp.path(), SpatialMode::Raw).unwrap();
-        let ipc_wkb = read_yxdb_to_ipc(tmp.path(), SpatialMode::Wkb).unwrap();
-        let ipc_geo = read_yxdb_to_ipc(tmp.path(), SpatialMode::GeoArrow).unwrap();
+        let ipc_raw = read_yxdb_to_ipc(tmp.path(), SpatialMode::Raw, false).unwrap();
+        let ipc_wkb = read_yxdb_to_ipc(tmp.path(), SpatialMode::Wkb, false).unwrap();
+        let ipc_geo = read_yxdb_to_ipc(tmp.path(), SpatialMode::GeoArrow, false).unwrap();
 
         assert!(!ipc_raw.is_empty());
         assert!(!ipc_wkb.is_empty());
@@ -3079,7 +3079,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         // Int8 → Int16 in YXDB → reads back as i16
         let col = df2.column("vals").unwrap().i16().unwrap();
         assert_eq!(col.get(0), Some(-128));
@@ -3139,7 +3139,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let col = df2.column("val").unwrap().i64().unwrap();
         assert_eq!(col.get(0), Some(0));
         assert_eq!(col.get(1), Some(42));
@@ -3161,7 +3161,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let col = df2.column("data").unwrap().binary().unwrap();
         let read_blob = col.get(0).unwrap();
         assert_eq!(read_blob.len(), 300_000);
@@ -3187,7 +3187,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         assert_eq!(df2.height(), 0);
         assert_eq!(df2.width(), 2);
         assert_eq!(df2.get_column_names()[0].as_str(), "id");
@@ -3211,7 +3211,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let col = df2.column("dur").unwrap().i64().unwrap();
         assert_eq!(col.get(0), Some(1_000_000));
         assert_eq!(col.get(1), Some(-500_000));
@@ -3236,7 +3236,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let col = df2.column("dur_ns").unwrap().i64().unwrap();
         assert_eq!(col.get(0), Some(5_000)); // normalized from ns → µs
     }
@@ -3258,7 +3258,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+        let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
         let col = df2.column("dur_ms").unwrap().i64().unwrap();
         assert_eq!(col.get(0), Some(3_000)); // normalized from ms → µs
     }

@@ -9,12 +9,12 @@ use memmap2::Mmap;
 use polars::prelude::*;
 use rayon::prelude::*;
 
+use super::header::{self, YxdbHeader, HEADER_SIZE};
+use super::lzf::{self, CompressionAlgorithm};
+use super::record;
+use super::record::FieldValue;
 use crate::error::{Result, YxdbError};
 use crate::field::{FieldMeta, FieldType};
-use crate::header::{self, YxdbHeader, HEADER_SIZE};
-use crate::lzf::{self, CompressionAlgorithm};
-use crate::record;
-use crate::record::FieldValue;
 
 /// A streaming YXDB file reader.
 ///
@@ -1701,14 +1701,16 @@ mod tests {
 
     #[test]
     fn all_types_shape() {
-        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw, false).unwrap();
         assert_eq!(df.height(), 2);
         assert_eq!(df.width(), 16);
     }
 
     #[test]
     fn all_types_integer_values() {
-        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw, false).unwrap();
         // Row 0 values (known from generation script)
         let byte_col = df.column("ByteCol").unwrap().i16().unwrap();
         assert_eq!(byte_col.get(0), Some(7));
@@ -1729,7 +1731,8 @@ mod tests {
 
     #[test]
     fn all_types_bool_values() {
-        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw, false).unwrap();
         let col = df.column("BoolCol").unwrap().bool().unwrap();
         assert_eq!(col.get(0), Some(true));
         assert_eq!(col.get(1), Some(false));
@@ -1737,7 +1740,8 @@ mod tests {
 
     #[test]
     fn all_types_float_values() {
-        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw, false).unwrap();
         let f32_col = df.column("FloatCol").unwrap().f32().unwrap();
         assert!((f32_col.get(0).unwrap() - 2.5).abs() < 0.01);
 
@@ -1754,7 +1758,8 @@ mod tests {
 
     #[test]
     fn all_types_string_values() {
-        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw, false).unwrap();
         let str_col = df.column("StringCol").unwrap().str().unwrap();
         assert_eq!(str_col.get(0), Some("Alteryx"));
 
@@ -1773,7 +1778,8 @@ mod tests {
 
     #[test]
     fn all_types_date_time_values() {
-        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw, false).unwrap();
 
         // DateCol → Polars Date (days since epoch)
         let date_col = df.column("DateCol").unwrap().date().unwrap();
@@ -1807,7 +1813,8 @@ mod tests {
 
     #[test]
     fn all_types_blob_values() {
-        let df = crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("AllTypes.yxdb"), crate::SpatialMode::Raw, false).unwrap();
         let col = df.column("BlobCol").unwrap().binary().unwrap();
 
         // Row 0: 1024 bytes (bytes(range(256)) * 4)
@@ -1828,7 +1835,8 @@ mod tests {
 
     #[test]
     fn null_values_populated_row() {
-        let df = crate::read_yxdb(test_path("NullValues.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("NullValues.yxdb"), crate::SpatialMode::Raw, false).unwrap();
         assert_eq!(df.height(), 3);
 
         // Row 0 is fully populated
@@ -1841,7 +1849,8 @@ mod tests {
 
     #[test]
     fn null_values_all_null_row() {
-        let df = crate::read_yxdb(test_path("NullValues.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("NullValues.yxdb"), crate::SpatialMode::Raw, false).unwrap();
 
         // Row 1: all null except Id
         let id_col = df.column("Id").unwrap().i32().unwrap();
@@ -1908,7 +1917,8 @@ mod tests {
 
     #[test]
     fn null_values_mixed_row() {
-        let df = crate::read_yxdb(test_path("NullValues.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("NullValues.yxdb"), crate::SpatialMode::Raw, false).unwrap();
 
         // Row 2: mixed — NullByte is null, NullInt16 is 50
         assert!(df
@@ -1933,14 +1943,24 @@ mod tests {
 
     #[test]
     fn many_records_shape() {
-        let df = crate::read_yxdb(test_path("ManyRecords.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(
+            test_path("ManyRecords.yxdb"),
+            crate::SpatialMode::Raw,
+            false,
+        )
+        .unwrap();
         assert_eq!(df.height(), 50_000);
         assert_eq!(df.width(), 3);
     }
 
     #[test]
     fn many_records_id_sum() {
-        let df = crate::read_yxdb(test_path("ManyRecords.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(
+            test_path("ManyRecords.yxdb"),
+            crate::SpatialMode::Raw,
+            false,
+        )
+        .unwrap();
         let id_col = df.column("Id").unwrap().i32().unwrap();
         let id_sum: i64 = id_col.into_iter().map(|v| v.unwrap_or(0) as i64).sum();
         // sum(1..=50000) = 50000 * 50001 / 2 = 1_250_025_000
@@ -1949,7 +1969,12 @@ mod tests {
 
     #[test]
     fn many_records_label_check() {
-        let df = crate::read_yxdb(test_path("ManyRecords.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(
+            test_path("ManyRecords.yxdb"),
+            crate::SpatialMode::Raw,
+            false,
+        )
+        .unwrap();
         let label_col = df.column("Label").unwrap().str().unwrap();
         assert_eq!(label_col.get(0), Some("row_00001"));
         assert_eq!(label_col.get(49_999), Some("row_50000"));
@@ -1959,7 +1984,8 @@ mod tests {
 
     #[test]
     fn large_blob_sizes() {
-        let df = crate::read_yxdb(test_path("LargeBlob.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("LargeBlob.yxdb"), crate::SpatialMode::Raw, false).unwrap();
         assert_eq!(df.height(), 4);
         let col = df.column("Data").unwrap().binary().unwrap();
 
@@ -1977,7 +2003,8 @@ mod tests {
 
     #[test]
     fn people_shape_and_columns() {
-        let df = crate::read_yxdb(test_path("People.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("People.yxdb"), crate::SpatialMode::Raw, false).unwrap();
         assert_eq!(df.height(), 200);
         assert_eq!(df.width(), 8);
         assert!(df
@@ -1989,7 +2016,8 @@ mod tests {
 
     #[test]
     fn people_no_null_ids() {
-        let df = crate::read_yxdb(test_path("People.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("People.yxdb"), crate::SpatialMode::Raw, false).unwrap();
         assert_eq!(df.column("PersonId").unwrap().null_count(), 0);
     }
 
@@ -1997,7 +2025,8 @@ mod tests {
 
     #[test]
     fn strings_edge_cases() {
-        let df = crate::read_yxdb(test_path("Strings.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("Strings.yxdb"), crate::SpatialMode::Raw, false).unwrap();
         assert_eq!(df.height(), 6);
 
         let vstr = df.column("VarStr").unwrap().str().unwrap();
@@ -2015,7 +2044,8 @@ mod tests {
 
     #[test]
     fn strings_unicode() {
-        let df = crate::read_yxdb(test_path("Strings.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df =
+            crate::read_yxdb(test_path("Strings.yxdb"), crate::SpatialMode::Raw, false).unwrap();
         let vwstr = df.column("VarWStr").unwrap().str().unwrap();
         // Row 0: "wïdé" (unicode in wide string)
         assert_eq!(vwstr.get(0), Some("wïdé"));
@@ -2027,7 +2057,12 @@ mod tests {
 
     #[test]
     fn single_column_values() {
-        let df = crate::read_yxdb(test_path("SingleColumn.yxdb"), crate::SpatialMode::Raw).unwrap();
+        let df = crate::read_yxdb(
+            test_path("SingleColumn.yxdb"),
+            crate::SpatialMode::Raw,
+            false,
+        )
+        .unwrap();
         assert_eq!(df.height(), 5);
         let col = df.column("Value").unwrap().i32().unwrap();
         assert_eq!(col.get(0), Some(10));
@@ -2084,6 +2119,7 @@ mod tests {
             test_path("People.yxdb"),
             &["PersonId", "FirstName"],
             crate::SpatialMode::Raw,
+            false,
         )
         .unwrap();
         assert_eq!(df.width(), 2);
@@ -2621,7 +2657,7 @@ mod tests {
         tmp.write_all(b"too short").unwrap();
         tmp.flush().unwrap();
 
-        let err = crate::read_yxdb(tmp.path(), crate::SpatialMode::Raw).unwrap_err();
+        let err = crate::read_yxdb(tmp.path(), crate::SpatialMode::Raw, false).unwrap_err();
         let msg = format!("{err}");
         assert!(
             msg.contains("too small") || msg.contains("512"),
@@ -2668,7 +2704,7 @@ mod tests {
         crate::write_yxdb(tmp.path(), &df, &[]).unwrap();
 
         // Full read
-        let df2 = crate::read_yxdb(tmp.path(), crate::SpatialMode::Raw).unwrap();
+        let df2 = crate::read_yxdb(tmp.path(), crate::SpatialMode::Raw, false).unwrap();
         assert_eq!(df2.height(), 0);
         assert_eq!(df2.width(), 2);
 
@@ -2697,7 +2733,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         crate::write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-        let df2 = crate::read_yxdb(tmp.path(), crate::SpatialMode::Raw).unwrap();
+        let df2 = crate::read_yxdb(tmp.path(), crate::SpatialMode::Raw, false).unwrap();
         let col = df2.column("payload").unwrap().binary().unwrap();
         assert_eq!(col.get(0).unwrap().len(), 300_000);
         assert!(col.get(0).unwrap().iter().all(|&b| b == 0xAB));
@@ -2710,6 +2746,7 @@ mod tests {
             test_path("AllTypes.yxdb"),
             &["Int32Col", "Nonexistent"],
             crate::SpatialMode::Raw,
+            false,
         );
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());

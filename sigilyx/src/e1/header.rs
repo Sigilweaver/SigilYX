@@ -35,7 +35,20 @@ pub struct YxdbHeader {
 }
 
 pub const HEADER_SIZE: usize = 512;
-const MAGIC: &[u8] = b"Alteryx Database File";
+pub const MAGIC: &[u8] = b"Alteryx Database File";
+
+/// Maximum number of records we accept from the file header.
+///
+/// 10 billion records is far beyond any realistic YXDB file.
+/// This guards against corrupt headers that claim huge record counts and
+/// cause the reader to attempt multi-gigabyte allocations.
+const MAX_RECORDS: u64 = 10_000_000_000;
+
+/// Maximum number of fields (columns) we accept from the XML metadata.
+///
+/// 100,000 columns is generous — real-world files rarely exceed a few hundred.
+/// This prevents pathological XML metadata from consuming excessive memory.
+pub const MAX_FIELDS: usize = 100_000;
 
 /// YXDB file ID for files **with** a spatial index.
 pub const ID_WRIGLEYDB: u32 = 0x00440205;
@@ -61,12 +74,10 @@ impl YxdbHeader {
         let num_records = u64::from_le_bytes(buf[104..112].try_into().unwrap());
         let compression_version = i32::from_le_bytes(buf[112..116].try_into().unwrap());
 
-        // Guard against corrupt headers: a record count with bit 63 set means
-        // the original i64 was negative, and any count above 2^63-1 is clearly
-        // bogus.  Reject early instead of panicking on a huge allocation.
-        if num_records > i64::MAX as u64 {
+        // Guard against corrupt headers with unreasonable record counts.
+        if num_records > MAX_RECORDS {
             return Err(YxdbError::InvalidFile(format!(
-                "header record count {num_records} is unreasonably large (corrupt file?)",
+                "header record count {num_records} exceeds limit of {MAX_RECORDS} (corrupt file?)",
             )));
         }
 
@@ -146,6 +157,12 @@ pub fn parse_meta_xml(xml: &str) -> Result<Vec<FieldMeta>> {
                     scale,
                     offset: current_offset,
                 });
+
+                if fields.len() > MAX_FIELDS {
+                    return Err(YxdbError::InvalidFile(format!(
+                        "field count exceeds limit of {MAX_FIELDS}"
+                    )));
+                }
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -236,10 +253,7 @@ mod tests {
         buf[104..112].copy_from_slice(&(-1i64).to_le_bytes());
         let err = YxdbHeader::parse(&buf).unwrap_err();
         let msg = format!("{err}");
-        assert!(
-            msg.contains("unreasonably large"),
-            "unexpected error: {msg}"
-        );
+        assert!(msg.contains("exceeds limit"), "unexpected error: {msg}");
     }
 
     #[test]
