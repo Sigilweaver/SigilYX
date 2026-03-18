@@ -26,6 +26,7 @@ def read_yxdb(
     path: Union[str, Path],
     *,
     spatial: str = "wkb",
+    allow_unverified_e2_types: bool = False,
 ) -> pl.DataFrame:
     """Read an Alteryx YXDB file and return a Polars DataFrame.
 
@@ -39,6 +40,11 @@ def read_yxdb(
         - ``"wkb"`` — decode the internal SHP format to ISO Well-Known
           Binary, consumable by Shapely, GeoPandas, PostGIS, GDAL, etc.
         - ``"raw"`` — keep the raw SHP bytes for expert/debug use.
+    allow_unverified_e2_types : bool, default False
+        If ``True``, attempt to read E2 files that contain field types
+        whose decoders have never been verified against real data
+        (Time, WString, Blob, SpatialObj). The decoders are speculative
+        and may produce incorrect results.
 
     Returns
     -------
@@ -51,7 +57,11 @@ def read_yxdb(
     >>> df = yx.read_yxdb("data.yxdb")
     >>> df = yx.read_yxdb("data.yxdb", spatial="raw")
     """
-    return _read_yxdb_df(str(path), spatial=spatial)
+    return _read_yxdb_df(
+        str(path),
+        spatial=spatial,
+        allow_unverified_e2_types=allow_unverified_e2_types,
+    )
 
 
 def read_yxdb_columns(
@@ -59,6 +69,7 @@ def read_yxdb_columns(
     columns: list[str],
     *,
     spatial: str = "wkb",
+    allow_unverified_e2_types: bool = False,
 ) -> pl.DataFrame:
     """Read only the specified columns from an Alteryx YXDB file.
 
@@ -73,6 +84,9 @@ def read_yxdb_columns(
         Column names to read.
     spatial : str, default ``"wkb"``
         How to handle ``SpatialObj`` columns (see :func:`read_yxdb`).
+    allow_unverified_e2_types : bool, default False
+        If ``True``, attempt to read E2 files with unverified field types
+        (see :func:`read_yxdb`).
 
     Returns
     -------
@@ -84,7 +98,12 @@ def read_yxdb_columns(
     >>> import sigilyx as yx
     >>> df = yx.read_yxdb_columns("data.yxdb", ["Id", "Name"])
     """
-    return _read_yxdb_df_columns(str(path), columns, spatial=spatial)
+    return _read_yxdb_df_columns(
+        str(path),
+        columns,
+        spatial=spatial,
+        allow_unverified_e2_types=allow_unverified_e2_types,
+    )
 
 
 def read_schema(path: Union[str, Path]) -> list[dict]:
@@ -349,6 +368,7 @@ def read_yxdb_arrow(
     path: Union[str, Path],
     *,
     spatial: str = "wkb",
+    allow_unverified_e2_types: bool = False,
 ) -> pyarrow.Table:
     """Read an Alteryx YXDB file and return a PyArrow Table.
 
@@ -362,6 +382,9 @@ def read_yxdb_arrow(
         Path to the .yxdb file.
     spatial : str, default ``"wkb"``
         How to handle ``SpatialObj`` columns (see :func:`read_yxdb`).
+    allow_unverified_e2_types : bool, default False
+        If ``True``, attempt to read E2 files with unverified field types
+        (see :func:`read_yxdb`).
 
     Returns
     -------
@@ -373,13 +396,16 @@ def read_yxdb_arrow(
     >>> import sigilyx as yx
     >>> table = yx.read_yxdb_arrow("data.yxdb")
     """
-    return read_yxdb(path, spatial=spatial).to_arrow()
+    return read_yxdb(
+        path, spatial=spatial, allow_unverified_e2_types=allow_unverified_e2_types
+    ).to_arrow()
 
 
 def read_yxdb_pandas(
     path: Union[str, Path],
     *,
     spatial: str = "wkb",
+    allow_unverified_e2_types: bool = False,
 ) -> "pandas.DataFrame":
     """Read an Alteryx YXDB file and return a pandas DataFrame.
 
@@ -392,6 +418,9 @@ def read_yxdb_pandas(
         Path to the .yxdb file.
     spatial : str, default ``"wkb"``
         How to handle ``SpatialObj`` columns (see :func:`read_yxdb`).
+    allow_unverified_e2_types : bool, default False
+        If ``True``, attempt to read E2 files with unverified field types
+        (see :func:`read_yxdb`).
 
     Returns
     -------
@@ -403,4 +432,6 @@ def read_yxdb_pandas(
     >>> import sigilyx as yx
     >>> df = yx.read_yxdb_pandas("data.yxdb")
     """
-    return read_yxdb_arrow(path, spatial=spatial).to_pandas()
+    return read_yxdb_arrow(
+        path, spatial=spatial, allow_unverified_e2_types=allow_unverified_e2_types
+    ).to_pandas()

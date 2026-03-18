@@ -120,6 +120,7 @@ def read_yxdb_geoarrow(
     path: Union[str, Path],
     *,
     columns: list[str] | None = None,
+    allow_unverified_e2_types: bool = False,
 ) -> pyarrow.Table:
     """Read a YXDB file and return a PyArrow Table with GeoArrow metadata.
 
@@ -133,6 +134,9 @@ def read_yxdb_geoarrow(
         Path to the .yxdb file.
     columns : list[str] or None, default None
         If provided, only read these columns.
+    allow_unverified_e2_types : bool, default False
+        If ``True``, attempt to read E2 files with unverified field types
+        (see :func:`read_yxdb`).
 
     Returns
     -------
@@ -150,9 +154,15 @@ def read_yxdb_geoarrow(
     spatial_cols = info["spatial_columns"]
 
     if columns is not None:
-        df = read_yxdb_columns(path, columns, spatial="wkb")
+        df = read_yxdb_columns(
+            path, columns, spatial="wkb",
+            allow_unverified_e2_types=allow_unverified_e2_types,
+        )
     else:
-        df = read_yxdb(path, spatial="wkb")
+        df = read_yxdb(
+            path, spatial="wkb",
+            allow_unverified_e2_types=allow_unverified_e2_types,
+        )
 
     table = df.to_arrow()
     return _apply_geoarrow_metadata(table, spatial_cols)
@@ -163,6 +173,7 @@ def read_yxdb_geo(
     *,
     columns: list[str] | None = None,
     geometry_column: str | None = None,
+    allow_unverified_e2_types: bool = False,
 ) -> geopandas.GeoDataFrame:
     """Read a YXDB file and return a GeoPandas GeoDataFrame.
 
@@ -216,11 +227,17 @@ def read_yxdb_geo(
         )
 
     if columns is not None:
-        df = read_yxdb_columns(path, columns, spatial="wkb")
+        df = read_yxdb_columns(
+            path, columns, spatial="wkb",
+            allow_unverified_e2_types=allow_unverified_e2_types,
+        )
         # Filter spatial columns to only those actually requested
         spatial_cols = [c for c in spatial_cols if c in columns]
     else:
-        df = read_yxdb(path, spatial="wkb")
+        df = read_yxdb(
+            path, spatial="wkb",
+            allow_unverified_e2_types=allow_unverified_e2_types,
+        )
 
     if not spatial_cols:
         raise ValueError(
