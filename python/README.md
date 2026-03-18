@@ -10,6 +10,8 @@ YXDB is the native binary format used by [Alteryx](https://www.alteryx.com/) Des
 
 The core is written in Rust — parallel LZF decompression, SIMD UTF-16→UTF-8 transcoding, direct Arrow array construction. No native Alteryx Designer installation required.
 
+> **Format scope:** `sigilyx` has full read/write support for the **E1** (original engine) YXDB layout. **Experimental** read support for **E2** (AMP engine) is included — 13 field types have been verified against real E2 files; 4 rare types (Blob, SpatialObj, Time, WString) have speculative decoders behind an opt-in flag. E2 writing is not yet supported. See [SPECIFICATION-E2.md](https://github.com/Sigilweaver/sigilyx/blob/main/SPECIFICATION-E2.md) for details.
+
 ## Installation
 
 ```bash

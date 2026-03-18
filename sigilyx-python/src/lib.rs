@@ -56,10 +56,14 @@ fn parse_spatial_mode(mode: &str) -> PyResult<SpatialMode> {
 /// df = read_yxdb_df("path/to/file.yxdb", spatial="raw")
 /// ```
 #[pyfunction]
-#[pyo3(signature = (path, spatial = "wkb"))]
-fn read_yxdb_df(path: &str, spatial: &str) -> PyResult<PyDataFrame> {
+#[pyo3(signature = (path, spatial = "wkb", allow_unverified_e2_types = false))]
+fn read_yxdb_df(
+    path: &str,
+    spatial: &str,
+    allow_unverified_e2_types: bool,
+) -> PyResult<PyDataFrame> {
     let mode = parse_spatial_mode(spatial)?;
-    let df = sigilyx_core::read_yxdb(path, mode).map_err(to_py_err)?;
+    let df = sigilyx_core::read_yxdb(path, mode, allow_unverified_e2_types).map_err(to_py_err)?;
     Ok(PyDataFrame(df))
 }
 
@@ -72,11 +76,17 @@ fn read_yxdb_df(path: &str, spatial: &str) -> PyResult<PyDataFrame> {
 /// df = read_yxdb_df_columns("file.yxdb", ["col_a", "col_b"])
 /// ```
 #[pyfunction]
-#[pyo3(signature = (path, columns, spatial = "wkb"))]
-fn read_yxdb_df_columns(path: &str, columns: Vec<String>, spatial: &str) -> PyResult<PyDataFrame> {
+#[pyo3(signature = (path, columns, spatial = "wkb", allow_unverified_e2_types = false))]
+fn read_yxdb_df_columns(
+    path: &str,
+    columns: Vec<String>,
+    spatial: &str,
+    allow_unverified_e2_types: bool,
+) -> PyResult<PyDataFrame> {
     let mode = parse_spatial_mode(spatial)?;
     let col_refs: Vec<&str> = columns.iter().map(|s| s.as_str()).collect();
-    let df = sigilyx_core::read_yxdb_columns(path, &col_refs, mode).map_err(to_py_err)?;
+    let df = sigilyx_core::read_yxdb_columns(path, &col_refs, mode, allow_unverified_e2_types)
+        .map_err(to_py_err)?;
     Ok(PyDataFrame(df))
 }
 
@@ -251,10 +261,15 @@ fn wkb_to_shp_py(py: Python<'_>, wkb: &[u8]) -> PyResult<Py<PyBytes>> {
 
 /// Read a YXDB file and return Arrow IPC bytes (legacy API).
 #[pyfunction]
-#[pyo3(signature = (path, spatial = "wkb"))]
-fn read_yxdb(py: Python<'_>, path: &str, spatial: &str) -> PyResult<Py<PyBytes>> {
+#[pyo3(signature = (path, spatial = "wkb", allow_unverified_e2_types = false))]
+fn read_yxdb(
+    py: Python<'_>,
+    path: &str,
+    spatial: &str,
+    allow_unverified_e2_types: bool,
+) -> PyResult<Py<PyBytes>> {
     let mode = parse_spatial_mode(spatial)?;
-    let ipc_bytes = read_yxdb_to_ipc(path, mode).map_err(to_py_err)?;
+    let ipc_bytes = read_yxdb_to_ipc(path, mode, allow_unverified_e2_types).map_err(to_py_err)?;
     Ok(PyBytes::new(py, &ipc_bytes).into())
 }
 
@@ -592,6 +607,9 @@ fn field_value_to_py(py: Python<'_>, val: FieldValue) -> Py<PyAny> {
         FieldValue::Time(Some(v)) => v.into_pyobject(py).unwrap().into_any().unbind(),
         FieldValue::DateTime(Some(v)) => v.into_pyobject(py).unwrap().into_any().unbind(),
         FieldValue::Blob(Some(v)) => PyBytes::new(py, &v).into_any().unbind(),
+        // BlobRef is an internal sentinel resolved before reaching consumers.
+        // If one leaks through, treat as None.
+        FieldValue::BlobRef(_, _) => py.None(),
     }
 }
 
