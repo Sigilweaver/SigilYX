@@ -6,7 +6,9 @@
 [![PyPI](https://img.shields.io/pypi/v/sigilyx)](https://pypi.org/project/sigilyx/)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
-[YXDB](SPECIFICATION.md) is the native binary format used by [Alteryx](https://www.alteryx.com/) Designer. SigilYX is a standalone, cross-platform library that reads and writes `.yxdb` files — 1.2–3× faster than the fastest open-source C++ readers.
+[YXDB](SPECIFICATION-E1.md) is the native binary format used by [Alteryx](https://www.alteryx.com/) Designer. SigilYX is a standalone, cross-platform library that reads and writes `.yxdb` files — 1.2–3× faster than the fastest open-source C++ readers.
+
+> **Format scope:** SigilYX has full read/write support for the **E1** (original engine) YXDB layout. **Experimental** read support for **E2** (AMP engine) is included — 13 field types have been verified against real E2 files; 4 rare types (Blob, SpatialObj, Time, WString) have speculative decoders behind an opt-in flag. E2 writing is not yet supported. See [SPECIFICATION-E1.md](SPECIFICATION-E1.md) and [SPECIFICATION-E2.md](SPECIFICATION-E2.md) for details.
 
 ## Packages
 
@@ -19,7 +21,7 @@
 
 - **Fast.** Parallel LZF decompression, SIMD UTF-16→UTF-8 transcoding, direct Arrow array construction.
 - **Cross-platform.** Windows, macOS, Linux — x64 and ARM wheels, no native Alteryx install needed.
-- **Full round-trip.** Read and write all 17 YXDB field types.
+- **Full round-trip.** Read and write all 17 E1 field types. E2 read support for 13 verified types.
 - **Multiple output formats.** Polars, PyArrow, or Pandas from the same call.
 - **Streaming.** Batched reads with constant memory; lazy scans with Polars LazyFrames.
 - **Spatial support.** `SpatialObj` columns decoded to ISO WKB (compatible with Shapely, PostGIS, GDAL).
