@@ -102,8 +102,8 @@ fn bench_columnar(file_path: &str, runs: usize) -> (usize, usize, Vec<f64>) {
     eprintln!("Mode: columnar (DataFrame)");
     eprintln!("Warming up ({} runs)...", WARMUP_RUNS);
     for _ in 0..WARMUP_RUNS {
-        let df =
-            sigilyx::read_yxdb(file_path, sigilyx::SpatialMode::Raw).expect("Failed to read YXDB");
+        let df = sigilyx::read_yxdb(file_path, sigilyx::SpatialMode::Raw, false)
+            .expect("Failed to read YXDB");
         total_rows = df.height();
         total_cols = df.width();
         drop(df);
@@ -113,8 +113,8 @@ fn bench_columnar(file_path: &str, runs: usize) -> (usize, usize, Vec<f64>) {
     let mut times: Vec<f64> = Vec::with_capacity(runs);
     for _ in 0..runs {
         let start = Instant::now();
-        let df =
-            sigilyx::read_yxdb(file_path, sigilyx::SpatialMode::Raw).expect("Failed to read YXDB");
+        let df = sigilyx::read_yxdb(file_path, sigilyx::SpatialMode::Raw, false)
+            .expect("Failed to read YXDB");
         let elapsed = start.elapsed().as_secs_f64();
         drop(df);
         times.push(elapsed);

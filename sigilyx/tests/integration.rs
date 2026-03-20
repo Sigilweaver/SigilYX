@@ -19,14 +19,14 @@ fn test_file(name: &str) -> PathBuf {
 
 #[test]
 fn read_all_types_file() {
-    let df = read_yxdb(test_file("AllTypes.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("AllTypes.yxdb"), SpatialMode::Raw, false).unwrap();
     assert!(df.height() > 0);
     assert!(df.width() > 0);
 }
 
 #[test]
 fn read_people_file() {
-    let df = read_yxdb(test_file("People.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("People.yxdb"), SpatialMode::Raw, false).unwrap();
     assert!(df.height() > 0);
     // People file should have typical columns
     assert!(df.width() >= 2);
@@ -34,13 +34,13 @@ fn read_people_file() {
 
 #[test]
 fn read_null_values_file() {
-    let df = read_yxdb(test_file("NullValues.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("NullValues.yxdb"), SpatialMode::Raw, false).unwrap();
     assert!(df.height() > 0);
 }
 
 #[test]
 fn read_many_records_file() {
-    let df = read_yxdb(test_file("ManyRecords.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("ManyRecords.yxdb"), SpatialMode::Raw, false).unwrap();
     assert!(
         df.height() > 1000,
         "expected many records, got {}",
@@ -50,38 +50,38 @@ fn read_many_records_file() {
 
 #[test]
 fn read_strings_file() {
-    let df = read_yxdb(test_file("Strings.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("Strings.yxdb"), SpatialMode::Raw, false).unwrap();
     assert!(df.height() > 0);
 }
 
 #[test]
 fn read_single_column_file() {
-    let df = read_yxdb(test_file("SingleColumn.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("SingleColumn.yxdb"), SpatialMode::Raw, false).unwrap();
     assert_eq!(df.width(), 1);
     assert!(df.height() > 0);
 }
 
 #[test]
 fn read_large_blob_file() {
-    let df = read_yxdb(test_file("LargeBlob.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("LargeBlob.yxdb"), SpatialMode::Raw, false).unwrap();
     assert!(df.height() > 0);
 }
 
 #[test]
 fn read_invalid_file_returns_error() {
-    let err = read_yxdb(test_file("not_a_yxdb.txt"), SpatialMode::Raw);
+    let err = read_yxdb(test_file("not_a_yxdb.txt"), SpatialMode::Raw, false);
     assert!(err.is_err());
 }
 
 #[test]
 fn read_too_small_file_returns_error() {
-    let err = read_yxdb(test_file("too_small.bin"), SpatialMode::Raw);
+    let err = read_yxdb(test_file("too_small.bin"), SpatialMode::Raw, false);
     assert!(err.is_err());
 }
 
 #[test]
 fn read_nonexistent_file_returns_error() {
-    let err = read_yxdb(test_file("does_not_exist.yxdb"), SpatialMode::Raw);
+    let err = read_yxdb(test_file("does_not_exist.yxdb"), SpatialMode::Raw, false);
     assert!(err.is_err());
 }
 
@@ -89,13 +89,14 @@ fn read_nonexistent_file_returns_error() {
 
 #[test]
 fn read_columns_subset() {
-    let df_full = read_yxdb(test_file("AllTypes.yxdb"), SpatialMode::Raw).unwrap();
+    let df_full = read_yxdb(test_file("AllTypes.yxdb"), SpatialMode::Raw, false).unwrap();
     let first_col = df_full.get_column_names()[0].to_string();
 
     let df_proj = read_yxdb_columns(
         test_file("AllTypes.yxdb"),
         &[first_col.as_str()],
         SpatialMode::Raw,
+        false,
     )
     .unwrap();
 
@@ -109,6 +110,7 @@ fn read_columns_unknown_returns_error() {
         test_file("People.yxdb"),
         &["nonexistent_column"],
         SpatialMode::Raw,
+        false,
     );
     assert!(err.is_err());
 }
@@ -117,12 +119,12 @@ fn read_columns_unknown_returns_error() {
 
 #[test]
 fn roundtrip_all_types() {
-    let df = read_yxdb(test_file("AllTypes.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("AllTypes.yxdb"), SpatialMode::Raw, false).unwrap();
     let tmp = tempfile::NamedTempFile::new().unwrap();
 
     write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
     assert_eq!(df.height(), df2.height());
     assert_eq!(df.width(), df2.width());
 
@@ -132,47 +134,47 @@ fn roundtrip_all_types() {
 
 #[test]
 fn roundtrip_null_values() {
-    let df = read_yxdb(test_file("NullValues.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("NullValues.yxdb"), SpatialMode::Raw, false).unwrap();
     let tmp = tempfile::NamedTempFile::new().unwrap();
 
     write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
     assert_eq!(df.height(), df2.height());
     assert_eq!(df.width(), df2.width());
 }
 
 #[test]
 fn roundtrip_many_records() {
-    let df = read_yxdb(test_file("ManyRecords.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("ManyRecords.yxdb"), SpatialMode::Raw, false).unwrap();
     let tmp = tempfile::NamedTempFile::new().unwrap();
 
     write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
     assert_eq!(df.height(), df2.height());
 }
 
 #[test]
 fn roundtrip_strings() {
-    let df = read_yxdb(test_file("Strings.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("Strings.yxdb"), SpatialMode::Raw, false).unwrap();
     let tmp = tempfile::NamedTempFile::new().unwrap();
 
     write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
     assert_eq!(df.height(), df2.height());
     assert_eq!(df.width(), df2.width());
 }
 
 #[test]
 fn roundtrip_large_blob() {
-    let df = read_yxdb(test_file("LargeBlob.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("LargeBlob.yxdb"), SpatialMode::Raw, false).unwrap();
     let tmp = tempfile::NamedTempFile::new().unwrap();
 
     write_yxdb(tmp.path(), &df, &[]).unwrap();
 
-    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
     assert_eq!(df.height(), df2.height());
 }
 
@@ -180,21 +182,21 @@ fn roundtrip_large_blob() {
 
 #[test]
 fn streaming_writer_roundtrip() {
-    let df = read_yxdb(test_file("People.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("People.yxdb"), SpatialMode::Raw, false).unwrap();
     let tmp = tempfile::NamedTempFile::new().unwrap();
 
     let mut writer = YxdbWriter::new(tmp.path(), &df).unwrap();
     writer.write_batch(&df).unwrap();
     writer.finish().unwrap();
 
-    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
     assert_eq!(df.height(), df2.height());
     assert_eq!(df.width(), df2.width());
 }
 
 #[test]
 fn streaming_writer_multiple_batches() {
-    let df = read_yxdb(test_file("People.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("People.yxdb"), SpatialMode::Raw, false).unwrap();
     let tmp = tempfile::NamedTempFile::new().unwrap();
 
     let mut writer = YxdbWriter::new(tmp.path(), &df).unwrap();
@@ -203,7 +205,7 @@ fn streaming_writer_multiple_batches() {
     writer.write_batch(&df).unwrap();
     writer.finish().unwrap();
 
-    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
     assert_eq!(df.height() * 2, df2.height());
 }
 
@@ -211,7 +213,7 @@ fn streaming_writer_multiple_batches() {
 
 #[test]
 fn batched_reader_reads_all_rows() {
-    let df_full = read_yxdb(test_file("ManyRecords.yxdb"), SpatialMode::Raw).unwrap();
+    let df_full = read_yxdb(test_file("ManyRecords.yxdb"), SpatialMode::Raw, false).unwrap();
     let expected_rows = df_full.height();
 
     let mut reader = YxdbReader::open(test_file("ManyRecords.yxdb")).unwrap();
@@ -227,7 +229,7 @@ fn batched_reader_reads_all_rows() {
 
 #[test]
 fn batched_reader_with_projection() {
-    let df_full = read_yxdb(test_file("AllTypes.yxdb"), SpatialMode::Raw).unwrap();
+    let df_full = read_yxdb(test_file("AllTypes.yxdb"), SpatialMode::Raw, false).unwrap();
     let first_col = df_full.get_column_names()[0].to_string();
 
     let mut reader = YxdbReader::open(test_file("AllTypes.yxdb")).unwrap();
@@ -258,14 +260,14 @@ fn reader_exposes_field_metadata() {
 
 #[test]
 fn write_with_explicit_schema_roundtrip() {
-    let df = read_yxdb(test_file("People.yxdb"), SpatialMode::Raw).unwrap();
+    let df = read_yxdb(test_file("People.yxdb"), SpatialMode::Raw, false).unwrap();
     let reader = YxdbReader::open(test_file("People.yxdb")).unwrap();
     let fields = reader.fields.clone();
     let tmp = tempfile::NamedTempFile::new().unwrap();
 
     write_yxdb_with_schema(tmp.path(), &df, &fields).unwrap();
 
-    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw).unwrap();
+    let df2 = read_yxdb(tmp.path(), SpatialMode::Raw, false).unwrap();
     assert_eq!(df.height(), df2.height());
     assert_eq!(df.width(), df2.width());
 }
@@ -276,10 +278,10 @@ fn write_with_explicit_schema_roundtrip() {
 fn ipc_roundtrip() {
     use sigilyx::{ipc_to_dataframe, read_yxdb_to_ipc};
 
-    let ipc_bytes = read_yxdb_to_ipc(test_file("People.yxdb"), SpatialMode::Raw).unwrap();
+    let ipc_bytes = read_yxdb_to_ipc(test_file("People.yxdb"), SpatialMode::Raw, false).unwrap();
     let df = ipc_to_dataframe(&ipc_bytes).unwrap();
 
-    let df_direct = read_yxdb(test_file("People.yxdb"), SpatialMode::Raw).unwrap();
+    let df_direct = read_yxdb(test_file("People.yxdb"), SpatialMode::Raw, false).unwrap();
     assert_eq!(df.height(), df_direct.height());
     assert_eq!(df.width(), df_direct.width());
 }
@@ -288,7 +290,7 @@ fn ipc_roundtrip() {
 fn ipc_batches_cover_all_rows() {
     use sigilyx::read_yxdb_to_ipc_batches;
 
-    let df_full = read_yxdb(test_file("ManyRecords.yxdb"), SpatialMode::Raw).unwrap();
+    let df_full = read_yxdb(test_file("ManyRecords.yxdb"), SpatialMode::Raw, false).unwrap();
     let batches =
         read_yxdb_to_ipc_batches(test_file("ManyRecords.yxdb"), 500, SpatialMode::Raw).unwrap();
 

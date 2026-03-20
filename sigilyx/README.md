@@ -10,9 +10,11 @@ YXDB is the native binary format used by [Alteryx](https://www.alteryx.com/) Des
 
 **1.2–3× faster than the fastest open-source C++ readers.** See [Performance](#performance).
 
+> **Format scope:** SigilYX has full read/write support for the **E1** (original engine) YXDB layout. **Experimental** read support for **E2** (AMP engine) is included — 13 field types have been verified against real E2 files; 4 rare types (Blob, SpatialObj, Time, WString) have speculative decoders behind an opt-in flag. E2 writing is not yet supported. See [SPECIFICATION-E2.md](https://github.com/Sigilweaver/sigilyx/blob/main/SPECIFICATION-E2.md) for details.
+
 ## Features
 
-- **Read and Write** — full round-trip support for all 17 YXDB field types
+- **Read and Write** — full round-trip for all 17 E1 field types; E2 read support for 13 verified types
 - **Polars integration** — reads directly into `polars::DataFrame` via Arrow array construction
 - **Columnar reader** — parallel LZF decompression, SIMD UTF-16→UTF-8 transcoding, memory-mapped I/O
 - **Row reader** — iterate record-by-record with typed `FieldValue` variants
