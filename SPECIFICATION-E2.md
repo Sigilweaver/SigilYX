@@ -1,6 +1,6 @@
 # YXDB E2 File Format Specification
 
-*Status: **Binary analysis in progress** — 144 E2 files sourced from 26 repositories, 12 of ~14 field types fully decoded (FixedDecimal and String now confirmed, bringing total to 12 of 14). Implementation covers the vast majority of real-world Alteryx workflows. See [Implementation Readiness Assessment](#implementation-readiness-assessment).*
+*Status: **Binary analysis in progress** — 168+ E2 files sourced from 39+ repositories, 15 of ~17 field types fully decoded (Blob, SpatialObj, and Byte now confirmed, bringing total to 15 of 17). Implementation covers the vast majority of real-world Alteryx workflows. See [Implementation Readiness Assessment](#implementation-readiness-assessment).*
 
 > **Established:** March 15, 2026. This document was created and committed to source control **before any E2 development work began** — no E2 files have been sourced, no binary analysis has been performed, and no E2 code has been written. The purpose is to document the process, sourcing rules, and legal constraints that will govern E2 development, so that the project's approach is unambiguous from the start.
 
@@ -62,17 +62,21 @@ Key differences from E1:
 
 Immediately after the XML metadata (at offset `100 + metadata_size`).
 
-- Begins with a **block type byte**: `0x00`, `0x01`, or `0x02`
-- Multiple blocks can be chained (observed in the largest file, A1 Task1Output.yxdb at 1.1 MB: two consecutive `0x02` blocks)
+- Begins with a **block type byte**: `0x00`, `0x01`, `0x02`, `0x03`, or `0x04`
+- Multiple blocks can be chained (observed in several files: Task1Output at 1.1 MB has two consecutive `0x02` blocks; Tree Survey at 11 MB has five `0x02` blocks interleaved with `0x03` blocks)
 - For `0x02` blocks: the type byte is followed by a **u32 LE block size**, then that many bytes of block data
-- For `0x01` blocks: **blob block** — stores large V_WString/V_String values that are too large for a single type 0x02 block. Observed in 1 file (Day12, 16,980 bytes). See [Block Internal Structure (type 0x01)](#block-internal-structure-type-0x01).
+- For `0x01` blocks: **blob block** — stores large variable-length values (V_WString, Blob, SpatialObj) that are too large for inline storage. See [Block Internal Structure (type 0x01)](#block-internal-structure-type-0x01).
+- For `0x03` blocks: **spatial index block** — per-record-block spatial index. Appears after each `0x02` block in files containing SpatialObj fields. See [Block Types 0x03 and 0x04 (Spatial Index)](#block-types-0x03-and-0x04-spatial-index).
+- For `0x04` blocks: **global spatial index block** — file-level spatial index. Appears once, after all `0x02`/`0x03` pairs. See [Block Types 0x03 and 0x04 (Spatial Index)](#block-types-0x03-and-0x04-spatial-index).
 - For `0x00`: sentinel byte marking end of block stream. Observed in 1 file with 0 records (day23_1, 338 bytes) where the sentinel immediately follows the metadata.
 - After the last block: a **null byte** (`0x00`), then the sentinel and footer
 
 Block type distribution across the corpus:
-- `0x02`: 65 files (standard record blocks — all field types)
-- `0x01`: 1 file (2015_Day12, 16,980 bytes — blob block for large V_WString value)
-- `0x00`: 1 file (2024_Day23_day23_1, 338 bytes — 0 records, sentinel immediately after metadata)
+- `0x02`: all files with records (standard record blocks — all field types)
+- `0x01`: files with large blobs (Day12 for V_WString, blood cell/loan files for Blob, Maine Counties/Gulf of Maine for SpatialObj)
+- `0x03`: files with SpatialObj fields (one per `0x02` block, spatial index)
+- `0x04`: files with SpatialObj fields (one per file, global spatial index)
+- `0x00`: sentinel (empty files, or end-of-stream marker)
 
 #### Block Internal Structure (type `0x02`)
 
@@ -98,22 +102,25 @@ Snappy element types observed in E2 data:
 
 #### Block Internal Structure (type `0x01`)
 
-Type `0x01` blocks store **large binary/string data** (blob blocks). Observed in 1 file (Day12) where a V_WString field contains a 37 KB JSON document. Structure:
+Type `0x01` blocks store **large binary/string data** (blob blocks). Used when V_WString, Blob, or SpatialObj values exceed the inline size threshold (~65 KB). Observed in V_WString (Day12), Blob (blood cell images, R model), and SpatialObj (Gulf of Maine, Maine Counties). Structure:
 
 | Offset | Size | Type | Content |
 |--------|------|------|---------|
-| 0 | 4 | u32 LE | **Uncompressed size** — total decompressed byte count |
-| 4 | 16 | bytes | **Integrity hash** (possibly MD5) — 16-byte value, purpose TBD |
-| 20 | 1 | byte | Constant `0x0A` — Snappy marker (same as type 0x02) |
-| 21 | varies | bytes | **Snappy raw data** — varint(uncompressed_size) + Snappy commands |
+| 0 | 4 | u32 LE | **Block size** — byte count of the 0x0A marker + Snappy data that follows (does NOT include the uncompressed_size or hash fields) |
+| 4 | 4 | u32 LE | **Uncompressed size** — total decompressed byte count |
+| 8 | 16 | bytes | **Integrity hash** (possibly MD5) — 16-byte value |
+| 24 | 1 | byte | Constant `0x0A` — Snappy marker (same as type 0x02) |
+| 25 | varies | bytes | **Snappy raw data** — varint(uncompressed_size) + Snappy commands |
 
-**Important:** The Snappy data may extend slightly past the declared block size (the u32 LE size in the outer block envelope). The decoder should decompress until the Snappy stream completes rather than relying solely on the declared size.
+**Total bytes consumed from file:** `5 + 4 + 16 + block_size` = `25 + block_size` bytes (1 type byte + 4 block_size + 4 uncompressed_size + 16 hash + block_size Snappy data).
 
-The decompressed content is the **raw string/blob value** (e.g., UTF-8 text), NOT framed record data. The record metadata and small fields are stored in a companion type `0x02` block that follows.
+**IMPORTANT:** The `block_size` field counts only the `0x0A` marker and Snappy data. The `uncompressed_size` (4 bytes) and `hash` (16 bytes) are stored between the block_size and the Snappy data, but are NOT counted in block_size. Decoders must read 20 additional bytes (4 + 16) before reaching the Snappy data at the block_size-counted region.
 
-**Companion type 0x02 block:** When a file uses type 0x01 blob blocks, a type 0x02 block follows containing the record structure. The decompressed block header (inner_size, first_rec_size) may have **bit 31 set** (0x80000000 flag) to indicate the record references external blob data. The V_WString field that holds the blob uses prefix byte `0x11` followed by 8 bytes (blob reference encoding, details TBD) instead of the standard 0x00/0x01/0x80+ string prefixes.
+The decompressed content is the **raw value data** (e.g., PNG image, UTF-8 text, spatial geometry bytes), NOT framed record data. Each type 0x01 block stores exactly one blob value. Records reference individual blocks by file offset.
 
-**Verified:** Full 37,048-byte Snappy decompression from Day12's type 0x01 block (0 errors). Companion type 0x02 block decompresses to 79 bytes containing 1 record with Bool + V_WString(path) + Bool + V_WString(blob_reference).
+**Companion type 0x02 block:** When a file uses type 0x01 blob blocks, a type 0x02 block follows containing the record structure. The decompressed block header (inner_size, first_rec_size) may have **bit 31 set** (0x80000000 flag) to indicate the record references external blob data. Inter-record size prefixes within the decompressed block also have bit 31 set when the record contains blob references. Variable-length fields that reference blob data use type-specific blob reference prefixes (`0x11` for strings, `0x12` for Blob, `0x13` for SpatialObj) followed by 8 bytes. See [Variable-Length Field Prefix Table](#variable-length-field-prefix-table).
+
+**Verified:** Day12's 37,048-byte V_WString blob. Blood cell file with 15 type 0x01 blocks (PNG images, 84K–290K each). Loan file with 1 type 0x01 block (1.3 MB R model). Maine Counties with 15 type 0x01 blocks (SpatialObj polygons, 18K–372K each). Gulf of Maine with 1 type 0x01 block (461K SpatialObj MultiPolygon).
 
 #### Decompressed Block Content
 
@@ -305,6 +312,104 @@ Example: 2022-12-17 21:52:09 → day serial 44,912 = `0x00AF70`, centisecond 7,8
 ##### Time
 
 Not observed in corpus. Predicted: base 12, type-specific null byte `0x4F`. The value likely encodes centiseconds since midnight in the lower bytes (same unit as DateTime's sub-day component).
+
+##### Byte
+
+**Compact prefix encoding with base 6.** Identical to Int16/Int32/Int64 encoding. A prefix byte P is followed by (P − 6) value bytes in LE. Since Byte values are 0–255, only prefix `0x06` (zero) and `0x07` (1 byte) are used in practice.
+
+| Prefix | Value Bytes | Meaning |
+|--------|-------------|--------|
+| `0x00`–`0x05` | 0 | Null (below-base) |
+| `0x06` | 0 | Value = 0 |
+| `0x07` | 1 | 1 data byte (0–255) |
+| `0x47` | 0 | Null (type-specific, 0x40 + type code 7) |
+
+**IMPORTANT: Byte always uses base=6, even in files where Int32 uses the base=5 variant.** The base=5 variant does NOT apply to Byte.
+
+**Verified:** Zero-error round-trip on 10,002 Byte field values across 3 files (EPL 2018: 21 records × 1 Byte field, Top 3 Players: 9 records × 1 Byte field, Golf Hole Difficulty: 4,986 records × 2 Byte fields). All values decoded correctly: ages 21–30 for football players, holes 1–18 and pars 3–5 for golf data.
+
+##### Blob
+
+**Type-specific variable-length encoding.** Blob fields use the same prefix-based scheme as strings but with distinct prefix bytes for long inline (`0x02`) and blob references (`0x12`).
+
+| Prefix | Meaning |
+|--------|---------|
+| `0x00` | Null (below-base) |
+| `0x41` | Null (type-specific) |
+| `0x80 \| len` | Short inline (≤127 bytes) |
+| `0x02` + u16 LE length | Long inline (≤65,535 bytes). u16 gives byte count of data that follows. |
+| `0x12` + u64 LE file offset | Blob reference — value stored in a type 0x01 block at the given absolute file offset. The entire decompressed block content is the blob value (length is implicit from the block's uncompressed_size). |
+
+**Inline vs out-of-line threshold:** Blobs ≤65,535 bytes are stored inline using `0x02` + u16. Larger blobs are stored in dedicated type 0x01 blocks (one blob per block, 1:1 mapping) and referenced by file offset using `0x12` + u64.
+
+**Verified:** Zero-error decoding of 25 Blob values: blood cell file (12 records × 2 Blob fields: 15 out-of-line PNG images 84K–290K via `0x12`, 9 inline PNG images 16K–23K via `0x02`), loan file (1 record × 1 Blob field: 1.3 MB R serialized model via `0x12`).
+
+##### SpatialObj
+
+**Type-specific variable-length encoding.** SpatialObj fields use the same prefix-based scheme but with distinct prefix bytes for long inline (`0x03`) and blob references (`0x13`).
+
+| Prefix | Meaning |
+|--------|---------|
+| `0x00` | Null (below-base) |
+| `0x43` | Null (type-specific, predicted) |
+| `0x80 \| len` | Short inline (≤127 bytes, predicted) |
+| `0x03` + u16 LE length | Long inline (≤65,535 bytes). u16 gives byte count of spatial data that follows. |
+| `0x13` + u64 LE file offset | Blob reference — spatial data stored in a type 0x01 block at the given absolute file offset. |
+
+**Spatial binary format:** The inline/blob data is an ESRI Shapefile geometry record (same format used in E1's SpatialObj), NOT OGC WKB. Observed geometry types:
+
+- **Point (type code 1):** 20 bytes — `u32 type(1) + f64 x + f64 y` (no bounding box)
+- **Polygon/MultiPolygon (type code 5):** 44 + parts×4 + points×16 bytes — `u32 type(5) + f64 bbox[4] + u32 num_parts + u32 num_points + u32[] part_indices + [f64 x, f64 y][] points`
+
+**Records containing blob references:** When a record references out-of-line blob data, bit 31 (0x80000000) is set on both the `inner_size` field in the decompressed block header AND on each inter-record size prefix for records containing references.
+
+**Verified:** Zero-error decoding across 3 files: Tree Survey (200,000 records × 1 SpatialObj field, all inline Points via `0x03`), Maine Counties (16 records × 1 SpatialObj field: 1 inline 18K polygon + 15 out-of-line polygons via `0x13`), Gulf of Maine (1 record × 1 SpatialObj field: 1 out-of-line 461K MultiPolygon with 81 parts and 28,792 points via `0x13`).
+
+##### Variable-Length Field Prefix Table
+
+All variable-length field types (V_String, V_WString, String, Blob, SpatialObj) use a consistent prefix-based encoding scheme. The long inline and blob reference prefixes vary by type:
+
+| Type Class | Below-base Null | Type-specific Null | Short Inline | Long Inline | Blob Reference |
+|------------|----------------|-------------------|--------------|-------------|----------------|
+| V_String / V_WString / String | `0x00` | `0x41` | `0x80 \| len` | `0x01` + u16 | `0x11` + 8 bytes |
+| Blob | `0x00` | `0x41` | `0x80 \| len` | `0x02` + u16 | `0x12` + 8 bytes |
+| SpatialObj | `0x00` | `0x43` (predicted) | `0x80 \| len` | `0x03` + u16 | `0x13` + 8 bytes |
+
+Pattern: The type class code (`0x01` for strings, `0x02` for blobs, `0x03` for spatial) determines both the long inline prefix and the blob reference prefix (`type_code | 0x10`).
+
+The 8-byte blob reference payload differs by context:
+- **`0x11` (V_String/V_WString):** `u32 LE offset + u32 LE length` into concatenated blob data (observed in Day12)
+- **`0x12` (Blob):** `u64 LE absolute file offset` to start of type 0x01 block; length is implicit from block's uncompressed_size
+- **`0x13` (SpatialObj):** `u64 LE absolute file offset` to start of type 0x01 block; length is implicit from block's uncompressed_size
+
+#### Block Types 0x03 and 0x04 (Spatial Index)
+
+Files containing SpatialObj fields include additional block types for spatial indexing:
+
+**Type 0x03 — Per-block spatial index:**
+Appears after each type 0x02 record block in files with SpatialObj fields. Contains a spatial index covering the records in the preceding block.
+
+| Offset | Size | Type | Content |
+|--------|------|------|---------|
+| 0 | 1 | byte | Block type = `0x03` |
+| 1 | 4 | u32 LE | **Block size** — byte count of the data that follows |
+| 5 | 4 | u32 LE | **Inner size** (purpose TBD) |
+| 9 | 1 | byte | Constant `0x0A` — Snappy marker |
+| 10 | varies | bytes | Snappy-compressed spatial index data |
+
+**NOTE:** The Snappy data extends 4 bytes past the declared block size. Decoders must read `block_size + 4` bytes of data after the block size field.
+
+**Type 0x04 — Global spatial index:**
+Appears once per file, after all type 0x02/0x03 block pairs. Contains a file-level spatial index.
+
+Layout identical to type 0x03.
+
+**Multi-block file layout with SpatialObj:**
+```
+[0x02 record block] [0x03 spatial index] [0x02 record block] [0x03 spatial index] ... [0x04 global index] [0x00 sentinel] [footer]
+```
+
+**These blocks are not required for record reading.** Decoders that do not need spatial query support can skip type 0x03 and 0x04 blocks entirely. The internal format of spatial index blocks uses compressed/delta encoding that has not been fully reversed.
 
 ##### FixedDecimal
 
@@ -528,6 +633,11 @@ Every encoding below was verified against real E2 files with zero-error round-tr
 | String (identical to V_String encoding) | Dragnet Source S (EPL, kumarritik24) | 320 records |
 | FixedDecimal (packed BCD with scale) | Dragnet Source S (kumarritik24) | 299 records × 3 fields |
 | Int32 base=5 variant (auto-detected) | 11 dragnet files | corpus-wide |
+| Byte (compact base 6, same as Int16/Int32/Int64) | 3 files (EPL, Top 3 Players, Golf Hole Difficulty) | 10,002 values |
+| Blob (inline 0x02+u16, blob ref 0x12+u64 file offset) | 2 files (blood cell holdout, loan random forest) | 25 values |
+| SpatialObj (inline 0x03+u16, blob ref 0x13+u64 file offset) | 3 files (Gulf of Maine, Maine Counties, Tree Survey) | 200,017 values |
+| Block types 0x03, 0x04 (spatial index, skip-friendly) | 3 files with SpatialObj | — |
+| Type 0x01 block corrected size (25 + block_size bytes) | 33 blocks across 5 files | — |
 
 ### Tier 2 — High-Confidence Predictions
 
@@ -545,7 +655,6 @@ Pattern extrapolation is plausible but not certain.
 | Feature | Prediction | Risk |
 |---------|-----------|------|
 | Time | Compact base 12 (0x0C), centiseconds since midnight (u24 LE, same as DateTime sub-day component) | Extrapolated from DateTime encoding. Base predicted from type code progression. |
-| Byte | Single-byte value with compact prefix (base 6 like other integers?) or raw byte | Could be simpler than other integers since max value is 255 |
 
 ### Tier 4 — Unknown
 
@@ -553,24 +662,19 @@ These have no observed samples and no reliable pattern to extrapolate from.
 
 | Feature | What's Missing |
 |---------|---------------|
-| SpatialObj | Entirely absent from corpus. Likely stored as blob (type 0x01 block?), but no evidence. |
-| Blob | Entirely absent from corpus. Relationship to type 0x01 blocks unclear. |
-| Type 0x01 blob reference (0x11 + 8 bytes) | Only 1 sample. The 8-byte reference is not decoded — could be an offset, a hash, or an index. |
+| WString | Not observed in E2 corpus. Predicted to use identical encoding to V_WString/String (UTF-8, 0x80\|len / 0x01+u16). |
+| Type 0x01 blob reference (0x11 + 8 bytes) | Only 1 sample. The 8 bytes appear to be u32 offset + u32 length into concatenated blob data (different from 0x12 which uses absolute file offset). |
 | Long strings (>65535 bytes) | All observed strings fit in u16 length. Does V_String support u32 length (0x02+u32?) or is it capped at 65535? |
 | Footer full semantics | 7×u32 fields, only record_count and a file_offset identified. Other 5 fields unknown. |
-| Date flag universality | Confirmed in 3 healthcare files (with flag) but CityBike DOES NOT have date flag despite containing Date fields. May depend on Alteryx version/workflow config. Decoders must auto-detect. |
-| Multi-block file layout | Only 1 multi-block file (Task1). Block sequencing and inter-block relationships not well understood. |
-| Int32 base variant detection | No header flag identified. Some files use base=5 for all integer types, others use base=6. Decoders must auto-detect by trial. |
 
 ### Verdict
 
-**Implementation is partially unblocked.** The 10 confirmed Tier 1 types (Bool, Int16, Int32, Int64, Float, Double, Date, DateTime, V_String, V_WString) cover the vast majority of Alteryx workflows. Double and DateTime were the two highest-priority gaps and are now fully confirmed.
+**Implementation is unblocked for all practical types.** The 15 confirmed Tier 1 types (Bool, Byte, Int16, Int32, Int64, Float, Double, Date, DateTime, V_String, V_WString, String, FixedDecimal, Blob, SpatialObj) cover the vast majority of Alteryx workflows, including spatial workloads and binary data storage.
 
 **What's still needed:**
-- Ideally files with **Time**, **Byte**, **SpatialObj**, or **Blob** fields
-- A single file per type is likely sufficient — the pattern-matching approach has been reliable
+- Ideally files with **Time** or **WString** fields (both predicted with high confidence but unverified)
 
-**Key risk:** Time is lower risk (centisecond encoding now confirmed from DateTime). The date flag byte inconsistency (present in some files, absent in others) requires auto-detection logic in the decoder. The Int32 base variant (base=5 vs base=6) requires auto-detection as no header flag distinguishes the two.
+**Base=5 variant clarification:** The base=5 variant applies to Int32 (and likely Int64). Byte always uses base=6 regardless. Decoders must auto-detect by trial.
 
 ---
 
@@ -593,9 +697,14 @@ These have no observed samples and no reliable pattern to extrapolate from.
 - ~~**DateTime encoding:**~~ — **ANSWERED.** Base 8, packed u48 (day serial × 2^24 + centisecond of day). See [DateTime](#datetime) section.
 - ~~**FixedDecimal encoding:**~~ — **ANSWERED.** Packed BCD with embedded scale and sign. Marker byte `0x04`, prefix determines digit count, scale byte from metadata. See [FixedDecimal](#fixeddecimal) section.
 - ~~**String encoding:**~~ — **ANSWERED.** Identical to V_String (0x80|len for short, 0x01+u16 for long). See [String](#string) section.
-- **Time/Byte/SpatialObj/Blob encoding:** Not present in corpus. Predicted encodings documented but unverified.
-- **Type 0x01 blob reference encoding:** The 8 bytes following the `0x11` V_WString prefix in blob-referencing records are not fully decoded. Only 1 sample file exists.
-- **Type 0x01 integrity hash:** The 16 bytes at offset 4–19 in the blob block header may be an MD5 hash. Purpose and verification TBD.
+- **Time/WString encoding:** Not present in corpus. Predicted encodings documented but unverified.
+- ~~**Type 0x01 blob reference encoding:**~~ **ANSWERED.** Three reference prefixes confirmed: `0x11` (string, offset+length), `0x12` (blob, file offset), `0x13` (spatial, file offset). See [Variable-Length Field Prefix Table](#variable-length-field-prefix-table).
+- **Type 0x01 integrity hash:** The 16 bytes at offset 8–23 in the blob block header may be an MD5 hash. Purpose and verification TBD.
+- ~~**SpatialObj encoding:**~~ **ANSWERED.** Uses `0x03` + u16 for inline, `0x13` + u64 for blob reference. Binary data is ESRI Shapefile geometry records.
+- ~~**Blob encoding:**~~ **ANSWERED.** Uses `0x02` + u16 for inline, `0x12` + u64 for blob reference. File offset points to type 0x01 block.
+- ~~**Byte encoding:**~~ **ANSWERED.** Compact integer base=6, identical to Int16/Int32/Int64. Always uses base=6 even in base=5 variant files.
+- **Base=5 variant scope:** Confirmed that base=5 applies to Int32 only (not Byte). Int16/Int64 base=5 behavior unconfirmed.
+- **Block types 0x03 and 0x04:** Spatial index blocks. Internal format uses compressed/delta encoding (not fully reversed). Decoders can safely skip these blocks.
 
 ---
 
@@ -752,6 +861,44 @@ Chronological record of binary analysis work, for auditability.
    - 1 file (EPL): 20/21 records clean (known edge case: record 6 has small Int32 value that doesn't round-trip with base=5, but base=6 gives 0% — file genuinely uses base=5 for most records)
    - 1 file: 0 records (empty file)
    - 3 files (MOHAMMADALI230): block parsing error — possibly unusual block structure or corrupted source files, investigation deferred
+
+### 2026-04-04 — Blob, SpatialObj, and Byte encodings decoded
+
+**Corpus:** 168+ E2 files from 39+ repositories (expanded from 144). New files stored in `.untracked/e2/`.
+
+**Method:** Python scripts with cramjam for Snappy decompression, hex analysis, and systematic record parsing. All analysis performed on local copies of sourced files.
+
+**Major findings:**
+
+1. **Blob encoding fully reversed.** Two files contained Blob fields: blood cell images (3.7 MB, 12 records × 2 Blob fields) and a loan prediction model (450 KB, 1 record × 1 Blob field). Two NEW prefix bytes discovered:
+   - `0x02` + u16 LE length = long inline blob (≤65,535 bytes). Parallels `0x01` for strings.
+   - `0x12` + u64 LE = blob reference via absolute file offset to a type 0x01 block. Each blob gets its own 0x01 block (1:1 mapping). Length is implicit from the block's uncompressed_size.
+   - 25 blob values verified (15 out-of-line PNG images + 9 inline PNG images + 1 out-of-line R model).
+
+2. **SpatialObj encoding fully reversed.** Three files contained SpatialObj fields: Gulf of Maine (461 KB, 1 polygon with 28,792 points), Maine Counties (8.3 MB, 16 county polygons), Tree Survey (11 MB, 200,000 point locations). Encoding uses:
+   - `0x03` + u16 LE = long inline spatial (≤65,535 bytes). All 200,000 Tree Survey points stored inline.
+   - `0x13` + u64 LE = blob reference via absolute file offset. Maine Counties: 15 of 16 polygons referenced out-of-line.
+   - Binary spatial data is ESRI Shapefile geometry records (same as E1), NOT OGC WKB. Point (type 1, 20 bytes), Polygon (type 5, variable).
+
+3. **Variable-length prefix table pattern confirmed.** The long-inline and blob-reference prefixes follow a systematic pattern based on type class:
+   - Strings: `0x01`/`0x11` (type class 1)
+   - Blobs: `0x02`/`0x12` (type class 2)
+   - SpatialObj: `0x03`/`0x13` (type class 3)
+   - General formula: long-inline = type_class, blob-reference = type_class | 0x10.
+
+4. **Block types 0x03 and 0x04 identified.** Files with SpatialObj fields include spatial index blocks:
+   - `0x03`: per-record-block spatial index (appears after each `0x02` block)
+   - `0x04`: global spatial index (appears once, after all `0x02`/`0x03` pairs)
+   - These blocks can be safely skipped by decoders that don't need spatial query support.
+   - Tree Survey interleaves 5 × [0x02 + 0x03] pairs, then one 0x04, then sentinel.
+
+5. **Type 0x01 block size accounting corrected.** The declared `block_size` counts only the `0x0A` marker and Snappy data. The `uncompressed_size` (4 bytes) and `hash` (16 bytes) are stored between block_size and Snappy data but NOT counted. True on-disk size = `25 + block_size` bytes. This explains the "Snappy overshoot" observed previously — the 20-byte discrepancy was the uncompressed_size + hash fields. Verified across all 33 type 0x01 blocks in the new corpus.
+
+6. **Byte encoding confirmed: compact integer base=6.** Three files with Byte fields (10,002 total values). Byte uses the same compact prefix encoding as Int16/Int32/Int64 with base=6. **Critical finding: Byte always uses base=6 even in files where Int32 uses the base=5 variant.** This corrects the spec's statement that "the base variant applies uniformly to all integer types." Values: ages 21-30 (football), holes 1-18, pars 3-5 (golf).
+
+7. **Bit 31 blob flag on inter-record sizes.** When records contain blob references (`0x12`, `0x13`), bit 31 (0x80000000) is set on both `inner_size` in the block header AND on each inter-record size prefix. Decoders must mask these with `& 0x7FFFFFFF` to get the actual sizes.
+
+8. **161/168 files read successfully** by SigilYX after implementation fixes (95.8% → targeting ~98%+ with the blob/spatial fixes).
 
 ---
 
@@ -1027,7 +1174,7 @@ Extracted from `Analytics/EHR Data Transformation.yxzp` (SHA-256: `87CF416F...0F
 1 E2 yxdb file committed directly to the repository. Sourced 2026-03-16. Archived on [Software Heritage](https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/PacktPublishing/Alteryx-Designer-Cookbook).
 
 | # | File | Size | SHA-256 |
-|---|------|------|---------|  
+|---|------|------|---------|
 | C1 | `ch3/Recipe2/DATA/CityBike_extract.yxdb` | 3,744,623 | `8A578CF741075E25DF184BCD3EB5BFAE3EFFA1F5E8835E95A01AE240212B41D2` |
 
 ### Source D: PacktPublishing/Data-Engineering-with-Alteryx
@@ -1035,7 +1182,7 @@ Extracted from `Analytics/EHR Data Transformation.yxzp` (SHA-256: `87CF416F...0F
 1 E2 yxdb file committed directly to the repository. Sourced 2026-03-16. Archived on [Software Heritage](https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/PacktPublishing/Data-Engineering-with-Alteryx).
 
 | # | File | Size | SHA-256 |
-|---|------|------|---------|  
+|---|------|------|---------|
 | D1 | `Chapter 06/Data/places_child.yxdb` | 1,204 | `4B69D667A6D262B6BD992A90BF8500C9C56C3A047F71F9DEC3D5EFB0C4E4E474` |
 
 ### Source E: SaudAzmi/airport-alteryx-workflow
@@ -1043,7 +1190,7 @@ Extracted from `Analytics/EHR Data Transformation.yxzp` (SHA-256: `87CF416F...0F
 1 E2 yxdb file committed directly to the repository. Sourced 2026-03-16. Archived on [Software Heritage](https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/SaudAzmi/airport-alteryx-workflow).
 
 | # | File | Size | SHA-256 |
-|---|------|------|---------|  
+|---|------|------|---------|
 | E1 | `Output/Airport_city_population.yxdb` | 159,410 | `CFB9789ABBEE56D3DEA244F58C8DCE6FCB9992175017F34E6EB1A8E7A9E85BA3` |
 
 ### Source F: AltonDsouza/Alteryx-Challenge-482-
@@ -1051,7 +1198,7 @@ Extracted from `Analytics/EHR Data Transformation.yxzp` (SHA-256: `87CF416F...0F
 1 E2 yxdb file extracted from `Challenge482_start_file.yxzp` and also committed directly at `Challenge482_start_file/Outputs/Q3_Answer.yxdb`. Sourced 2026-03-16. Archived on [Software Heritage](https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/AltonDsouza/Alteryx-Challenge-482-).
 
 | # | File | Size | SHA-256 |
-|---|------|------|---------|  
+|---|------|------|---------|
 | F1 | `Challenge482_start_file/Outputs/Q3_Answer.yxdb` | 63,078 | `156376EE57DDC063571B5AF41DC6000DB4433596F0934C3C7C33BF884503246D` |
 
 ### Source G: liyengL/Alteryx_challenges
@@ -1059,7 +1206,7 @@ Extracted from `Analytics/EHR Data Transformation.yxzp` (SHA-256: `87CF416F...0F
 1 E2 yxdb file extracted from `Movie.yxzp`. Sourced 2026-03-16. Archived on [Software Heritage](https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/liyengL/Alteryx_challenges).
 
 | # | File | Size | SHA-256 |
-|---|------|------|---------|  
+|---|------|------|---------|
 | G1 | `Movie.yxzp` → `Input335.yxdb` | 45,403 | `A674BD1E545FA834B18B46E983F55DBF7B841D15017D44EC15EAC65D7255BBA4` |
 
 ### Source H: ABANISINGHA/Alteryx_workflows

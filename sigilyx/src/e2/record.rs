@@ -37,9 +37,9 @@ const NULL_TIME: u8 = 0x4F;
 const NULL_FIXED_DECIMAL: u8 = 0x4C; // UNVERIFIED — type code 12, conflicts with NULL_DOUBLE_ALT
 const NULL_STRING: u8 = 0x41; // UNVERIFIED — assumed same as V_String
 const NULL_WSTRING: u8 = 0x41; // UNVERIFIED — assumed same as V_WString
-const NULL_BLOB: u8 = 0x41; // UNVERIFIED — wild guess, no corpus data
-#[allow(dead_code)] // Documented for reference; SpatialObj reuses decode_blob
-const NULL_SPATIAL: u8 = 0x41; // UNVERIFIED — wild guess, no corpus data
+const NULL_BLOB: u8 = 0x41; // Confirmed — same as V_String/V_WString
+#[allow(dead_code)] // Documented for reference; SpatialObj has its own decoder
+const NULL_SPATIAL: u8 = 0x43; // Predicted — type code 3 → 0x40+3=0x43
 
 /// Returns `true` if the given field type has been verified against real E2
 /// corpus data. Types that return `false` have speculative decoders that may
@@ -60,6 +60,8 @@ pub fn is_e2_verified_type(ft: FieldType) -> bool {
             | FieldType::String
             | FieldType::VString
             | FieldType::VWString
+            | FieldType::Blob
+            | FieldType::SpatialObj
     )
 }
 
@@ -136,14 +138,14 @@ pub fn decode_field(
         FieldType::String => decode_string(data, pos, NULL_STRING),
         FieldType::WString => decode_string(data, pos, NULL_WSTRING),
 
-        // UNVERIFIED: Blob — guessing it uses the same string/blob
-        // encoding (inline data or 0x11 blob reference). Returns raw
-        // bytes. Null byte 0x41 is a wild guess.
+        // Blob — inline data via 0x80|len or 0x02+u16 length prefixes,
+        // and 0x12 blob references for large values. Returns raw bytes.
         FieldType::Blob => decode_blob(data, pos),
 
-        // UNVERIFIED: SpatialObj — entirely unknown. Guessing same
-        // as Blob (binary data, possibly WKB). May not exist in E2.
-        FieldType::SpatialObj => decode_blob(data, pos),
+        // SpatialObj — inline data via 0x80|len or 0x03+u16 length
+        // prefixes, and 0x13 blob references for large values.
+        // Binary format is ESRI Shapefile geometry records.
+        FieldType::SpatialObj => decode_spatial(data, pos),
     }
     .map(|(val, end)| {
         let consumed = end - offset;
@@ -459,14 +461,10 @@ fn decode_fixed_decimal(data: &[u8], pos: usize) -> Result<(FieldValue, usize), 
     Err(DecodeError::InvalidPrefix(prefix, FieldType::FixedDecimal))
 }
 
-// ── Blob / SpatialObj (UNVERIFIED) ──────────────────────────────────
+// ── Blob ─────────────────────────────────────────────────────────────
 //
-// WARNING: This decoder has NEVER been validated against real E2 Blob or
-// SpatialObj fields. We reuse the V_String encoding logic: inline data
-// via 0x80|len or 0x01+u16 length prefixes, and 0x11 blob references.
-// For Blob fields, data is returned as raw bytes. For SpatialObj, the
-// binary format is entirely unknown (possibly WKB, possibly Alteryx SHP).
-// Null byte 0x41 is a wild guess.
+// Blob fields use type-class 2: inline via 0x80|len or 0x02+u16,
+// blob references via 0x12+u64 (absolute file offset to type 0x01 block).
 
 fn decode_blob(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeError> {
     let prefix = data[pos];
@@ -486,7 +484,8 @@ fn decode_blob(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeErr
         return Ok((FieldValue::Blob(Some(data[pos + 1..end].to_vec())), end));
     }
 
-    // Long inline: prefix = 0x01 + u16 LE len
+    // Long inline string (type class 1): prefix = 0x01 + u16 LE len
+    // (kept for backward compat with existing corpus / V_String-like paths)
     if prefix == 0x01 {
         if pos + 3 > data.len() {
             return Err(DecodeError::UnexpectedEof);
@@ -499,8 +498,21 @@ fn decode_blob(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeErr
         return Ok((FieldValue::Blob(Some(data[pos + 3..end].to_vec())), end));
     }
 
-    // Blob reference: prefix = 0x11 + 8 bytes (offset + length into blob_data)
-    // PARTIALLY VERIFIED — only 1 corpus file (Day12) uses this path.
+    // Long inline blob (type class 2): prefix = 0x02 + u16 LE len
+    if prefix == 0x02 {
+        if pos + 3 > data.len() {
+            return Err(DecodeError::UnexpectedEof);
+        }
+        let len = u16::from_le_bytes(data[pos + 1..pos + 3].try_into().unwrap()) as usize;
+        let end = pos + 3 + len;
+        if end > data.len() {
+            return Err(DecodeError::UnexpectedEof);
+        }
+        return Ok((FieldValue::Blob(Some(data[pos + 3..end].to_vec())), end));
+    }
+
+    // Blob reference (type class 1 — V_String style): prefix = 0x11 + 8 bytes
+    // u32 offset + u32 length into concatenated blob_data
     if prefix == 0x11 {
         let end = pos + 1 + 8;
         if end > data.len() {
@@ -511,7 +523,70 @@ fn decode_blob(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeErr
         return Ok((FieldValue::BlobRef(blob_offset, blob_len), end));
     }
 
+    // Blob reference (type class 2 — file offset): prefix = 0x12 + u64 LE
+    // u64 absolute file offset to start of type 0x01 block
+    if prefix == 0x12 {
+        let end = pos + 1 + 8;
+        if end > data.len() {
+            return Err(DecodeError::UnexpectedEof);
+        }
+        let file_offset = u64::from_le_bytes(data[pos + 1..pos + 9].try_into().unwrap()) as usize;
+        // Use BlobRef with a sentinel length of usize::MAX to signal
+        // "file-offset reference" vs "offset+length reference"
+        return Ok((FieldValue::BlobRef(file_offset, usize::MAX), end));
+    }
+
     Err(DecodeError::InvalidPrefix(prefix, FieldType::Blob))
+}
+
+// ── SpatialObj ──────────────────────────────────────────────────────
+//
+// SpatialObj fields use type-class 3: inline via 0x80|len or 0x03+u16,
+// blob references via 0x13+u64 (absolute file offset to type 0x01 block).
+// Binary data is ESRI Shapefile geometry records.
+
+fn decode_spatial(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeError> {
+    let prefix = data[pos];
+
+    // Null
+    if prefix == 0x00 || prefix == NULL_SPATIAL {
+        return Ok((FieldValue::Blob(None), pos + 1));
+    }
+
+    // Short inline: prefix = 0x80 | len
+    if prefix & 0x80 != 0 {
+        let len = (prefix & 0x7F) as usize;
+        let end = pos + 1 + len;
+        if end > data.len() {
+            return Err(DecodeError::UnexpectedEof);
+        }
+        return Ok((FieldValue::Blob(Some(data[pos + 1..end].to_vec())), end));
+    }
+
+    // Long inline spatial (type class 3): prefix = 0x03 + u16 LE len
+    if prefix == 0x03 {
+        if pos + 3 > data.len() {
+            return Err(DecodeError::UnexpectedEof);
+        }
+        let len = u16::from_le_bytes(data[pos + 1..pos + 3].try_into().unwrap()) as usize;
+        let end = pos + 3 + len;
+        if end > data.len() {
+            return Err(DecodeError::UnexpectedEof);
+        }
+        return Ok((FieldValue::Blob(Some(data[pos + 3..end].to_vec())), end));
+    }
+
+    // Blob reference (type class 3 — file offset): prefix = 0x13 + u64 LE
+    if prefix == 0x13 {
+        let end = pos + 1 + 8;
+        if end > data.len() {
+            return Err(DecodeError::UnexpectedEof);
+        }
+        let file_offset = u64::from_le_bytes(data[pos + 1..pos + 9].try_into().unwrap()) as usize;
+        return Ok((FieldValue::BlobRef(file_offset, usize::MAX), end));
+    }
+
+    Err(DecodeError::InvalidPrefix(prefix, FieldType::SpatialObj))
 }
 
 // ── Date ────────────────────────────────────────────────────────────

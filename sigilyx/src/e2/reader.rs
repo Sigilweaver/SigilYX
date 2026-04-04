@@ -28,10 +28,15 @@ pub struct E2Reader {
     pub meta_xml: String,
     /// Whether the first Date field in each record has a preceding 0x00 flag byte.
     has_date_flag: bool,
-    /// Blob data from type 0x01 blocks (if any).
-    blob_data: Option<Vec<u8>>,
+    /// Blob data from type 0x01 blocks, keyed by file offset.
+    /// For 0x11 references (Day12 style): single entry at key 0 with concatenated data.
+    /// For 0x12/0x13 references: one entry per blob, keyed by the file offset
+    /// at which the type 0x01 block starts.
+    blob_blocks: std::collections::HashMap<usize, Vec<u8>>,
     /// Whether to allow reading unverified E2 field types.
     allow_unverified: bool,
+    /// Current file position (tracked for blob block offset keying).
+    file_pos: u64,
 }
 
 impl E2Reader {
@@ -63,14 +68,17 @@ impl E2Reader {
 
         let fields = header::parse_meta_xml(&meta_xml)?;
 
+        let file_pos = (HEADER_SIZE + meta_size) as u64;
+
         Ok(Self {
             stream,
             header,
             fields,
             meta_xml,
             has_date_flag: false,
-            blob_data: None,
+            blob_blocks: std::collections::HashMap::new(),
             allow_unverified: false,
+            file_pos,
         })
     }
 
@@ -151,8 +159,8 @@ impl E2Reader {
                         }
                     }
                 }
-                Block::Blob(data) => {
-                    self.blob_data = Some(data);
+                Block::Blob(offset, data) => {
+                    self.blob_blocks.insert(offset, data);
                 }
             }
         }
@@ -186,80 +194,59 @@ impl E2Reader {
             Ok(_) => {}
         }
 
+        // The file offset of this block's type byte
+        let block_start = self.file_pos as usize;
+        self.file_pos += 1;
+
         match type_byte[0] {
             0x00 => Ok(None),
             0x01 => {
-                // Blob block: Snappy data may extend past declared block_size (per spec).
+                // Blob block structure:
+                //   [type=0x01] [block_size:u32] [uncompressed_size:u32] [hash:16] [0x0A] [snappy data]
+                // block_size counts only the 0x0A marker + snappy data.
+                // Total on-disk = 1(type) + 4(block_size) + 4(uncomp_size) + 16(hash) + block_size
                 let mut size_buf = [0u8; 4];
                 self.stream.read_exact(&mut size_buf)?;
                 let block_size = u32::from_le_bytes(size_buf) as usize;
+                self.file_pos += 4;
 
-                // Read declared size + generous extra for Snappy overshoot
-                let read_size = block_size + 256;
-                let mut block_data = vec![0u8; read_size];
-                let mut total_read = 0;
-                while total_read < read_size {
-                    match self.stream.read(&mut block_data[total_read..]) {
-                        Ok(0) => break,
-                        Ok(n) => total_read += n,
-                        Err(e) => return Err(e.into()),
-                    }
-                }
-                block_data.truncate(total_read);
+                // Read uncompressed_size (4 bytes) + hash (16 bytes) = 20 bytes
+                let mut header_buf = [0u8; 20];
+                self.stream.read_exact(&mut header_buf)?;
+                self.file_pos += 20;
 
-                if block_data.len() < 21 {
+                // Read the Snappy data (block_size bytes: 0x0A marker + actual Snappy)
+                let mut snappy_with_marker = vec![0u8; block_size];
+                self.stream.read_exact(&mut snappy_with_marker)?;
+                self.file_pos += block_size as u64;
+
+                if snappy_with_marker.is_empty() || snappy_with_marker[0] != 0x0A {
                     return Err(YxdbError::InvalidFile(
-                        "E2 type 0x01 block too small".into(),
+                        "E2 type 0x01 block missing 0x0A marker".into(),
                     ));
                 }
 
-                // Skip uncompressed_size(4) + hash(16) + 0x0A marker(1) = 21 bytes
-                // Try decompression with increasing input sizes because the Snappy
-                // stream may extend past the declared block_size, but trailing bytes
-                // (from the next block/footer) corrupt the decoder.
-                let snappy_offset = 21;
-                let base_len = block_size.saturating_sub(snappy_offset);
-                let max_len = total_read.saturating_sub(snappy_offset);
+                let snappy_data = &snappy_with_marker[1..];
+                let decompressed = snap::raw::Decoder::new()
+                    .decompress_vec(snappy_data)
+                    .map_err(|e| {
+                        YxdbError::InvalidFile(format!(
+                            "E2 Snappy decompression failed (blob block): {e}"
+                        ))
+                    })?;
 
-                let mut decompressed = None;
-                let mut actual_snappy_len = 0;
-                for try_len in base_len..=max_len {
-                    let snappy_data = &block_data[snappy_offset..snappy_offset + try_len];
-                    match snap::raw::Decoder::new().decompress_vec(snappy_data) {
-                        Ok(data) => {
-                            decompressed = Some(data);
-                            actual_snappy_len = try_len;
-                            break;
-                        }
-                        Err(_) => continue,
-                    }
-                }
-
-                let decompressed = decompressed.ok_or_else(|| {
-                    YxdbError::InvalidFile(
-                        "E2 Snappy decompression failed (blob block): all input sizes failed"
-                            .into(),
-                    )
-                })?;
-
-                // Seek to the correct position: header(21) + actual snappy data
-                use std::io::{Seek, SeekFrom};
-                let consumed = snappy_offset + actual_snappy_len;
-                let overshoot = total_read as i64 - consumed as i64;
-                if overshoot > 0 {
-                    self.stream.seek(SeekFrom::Current(-overshoot))?;
-                }
-
-                Ok(Some(Block::Blob(decompressed)))
+                Ok(Some(Block::Blob(block_start, decompressed)))
             }
             0x02 => {
                 // Record block
                 let mut size_buf = [0u8; 4];
                 self.stream.read_exact(&mut size_buf)?;
                 let block_size = u32::from_le_bytes(size_buf) as usize;
+                self.file_pos += 4;
 
                 let mut block_data = vec![0u8; block_size];
                 self.stream.read_exact(&mut block_data)?;
+                self.file_pos += block_size as u64;
 
                 if block_data.is_empty() || block_data[0] != 0x0A {
                     return Err(YxdbError::InvalidFile(
@@ -275,6 +262,29 @@ impl E2Reader {
                     })?;
 
                 Ok(Some(Block::Record(decompressed)))
+            }
+            0x03 | 0x04 => {
+                // Spatial index blocks — skip them.
+                // Structure: [type] [block_size:u32] [inner_size:u32] [0x0A] [snappy data]
+                // The Snappy data extends 4 bytes past the declared block_size,
+                // but inner_size (4 bytes) is already outside the block_size count.
+                let mut size_buf = [0u8; 4];
+                self.stream.read_exact(&mut size_buf)?;
+                let block_size = u32::from_le_bytes(size_buf) as usize;
+                self.file_pos += 4;
+
+                // Read inner_size (4 bytes, not counted in block_size)
+                let mut inner_buf = [0u8; 4];
+                self.stream.read_exact(&mut inner_buf)?;
+                self.file_pos += 4;
+
+                // Skip the block data (block_size bytes)
+                let mut skip_buf = vec![0u8; block_size];
+                self.stream.read_exact(&mut skip_buf)?;
+                self.file_pos += block_size as u64;
+
+                // Continue reading the next block
+                self.read_block()
             }
             other => Err(YxdbError::InvalidFile(format!(
                 "unknown E2 block type: 0x{other:02X}"
@@ -320,8 +330,8 @@ impl E2Reader {
                     "E2 record {i}: not enough bytes for size prefix"
                 )));
             }
-            let rec_size =
-                u32::from_le_bytes(decompressed[pos..pos + 4].try_into().unwrap()) as usize;
+            let rec_size = (u32::from_le_bytes(decompressed[pos..pos + 4].try_into().unwrap())
+                & 0x7FFF_FFFF) as usize;
             pos += 4;
 
             let end = pos + rec_size;
@@ -453,19 +463,40 @@ impl E2Reader {
             }
         }
 
-        // Resolve BlobRef values against stored blob_data.
-        // BlobRef(offset, len) references a slice of the decompressed type 0x01
-        // block data. For V_String/V_WString fields the slice is UTF-8 text;
-        // for Blob/SpatialObj it's raw bytes.
-        if let Some(blob) = &self.blob_data {
+        // Resolve BlobRef values against stored blob blocks.
+        //
+        // BlobRef(offset, len) where len != usize::MAX:
+        //   Old-style "0x11" reference: offset+length into a single blob_data block (Day12 style).
+        //   The corresponding blob block is stored at key 0 or at whatever file offset was used.
+        //
+        // BlobRef(file_offset, usize::MAX):
+        //   New-style "0x12"/"0x13" reference: lookup by exact file offset key.
+        //   The entire decompressed block is the blob value.
+        if !self.blob_blocks.is_empty() {
             for (i, val) in values.iter_mut().enumerate() {
                 if let FieldValue::BlobRef(off, len) = val {
                     let off = *off;
                     let len = *len;
                     let ft = self.fields[i].field_type;
-                    if off + len <= blob.len() {
-                        let slice = &blob[off..off + len];
-                        *val = match ft {
+
+                    let resolved = if len == usize::MAX {
+                        // File-offset reference (0x12/0x13): look up by file offset
+                        self.blob_blocks.get(&off).map(|data| data.as_slice())
+                    } else {
+                        // Offset+length reference (0x11): find any blob block and
+                        // slice into it. In the Day12 style there's typically one
+                        // blob block containing all concatenated data.
+                        self.blob_blocks.values().next().and_then(|blob| {
+                            if off + len <= blob.len() {
+                                Some(&blob[off..off + len])
+                            } else {
+                                None
+                            }
+                        })
+                    };
+
+                    *val = match resolved {
+                        Some(slice) => match ft {
                             FieldType::Blob | FieldType::SpatialObj => {
                                 FieldValue::Blob(Some(slice.to_vec()))
                             }
@@ -473,18 +504,16 @@ impl E2Reader {
                                 let s = String::from_utf8_lossy(slice).into_owned();
                                 FieldValue::String(Some(s))
                             }
-                        };
-                    } else {
-                        // Reference out of bounds — return null
-                        *val = match ft {
+                        },
+                        None => match ft {
                             FieldType::Blob | FieldType::SpatialObj => FieldValue::Blob(None),
                             _ => FieldValue::String(None),
-                        };
-                    }
+                        },
+                    };
                 }
             }
         } else {
-            // No blob_data available — convert any BlobRef to null
+            // No blob blocks available — convert any BlobRef to null
             for (i, val) in values.iter_mut().enumerate() {
                 if matches!(val, FieldValue::BlobRef(_, _)) {
                     let ft = self.fields[i].field_type;
@@ -503,7 +532,8 @@ impl E2Reader {
 /// Internal block types.
 enum Block {
     Record(Vec<u8>),
-    Blob(Vec<u8>),
+    /// Blob block: (file_offset_of_block_start, decompressed_data)
+    Blob(usize, Vec<u8>),
 }
 
 /// Try to skip an extra Int64 value at the given offset.
@@ -569,10 +599,12 @@ fn field_values_to_series(
             Ok(ca.into_series())
         }
         FieldType::Byte => {
-            let ca: UInt8Chunked = values
+            // Map Byte (u8) to Int16 to match E1 behaviour and avoid
+            // pyo3-polars UInt8 conversion issues.
+            let ca: Int16Chunked = values
                 .into_iter()
                 .map(|v| match v {
-                    FieldValue::Byte(b) => b,
+                    FieldValue::Byte(b) => b.map(|v| v as i16),
                     _ => None,
                 })
                 .collect_ca(PlSmallStr::from(name));
