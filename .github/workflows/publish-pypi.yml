@@ -91,7 +91,7 @@ jobs:
           command: sdist
           args: --out dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-sdist
           path: dist/*.tar.gz
@@ -155,7 +155,7 @@ jobs:
           # the maturin sccache: flag would re-enable it even when we
           # explicitly disabled it due to a cache backend outage.
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.os }}-${{ matrix.target }}
           path: dist/*.whl
