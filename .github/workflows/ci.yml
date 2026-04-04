@@ -76,7 +76,7 @@ jobs:
       - uses: ./.github/actions/setup-sccache
       - uses: Swatinem/rust-cache@v2
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
 
       - name: Build and test
         run: |
