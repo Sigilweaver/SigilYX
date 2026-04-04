@@ -174,14 +174,15 @@ Record blocks are compressed using the LZF algorithm.
 
 ```
 ┌─────────────────────────────────────────┐
-│ Compressed size (4 bytes, u32 LE)       │
-│ (0x00000000 = uncompressed block)       │
+│ Block length (4 bytes, u32 LE)          │
+│ Bit 31 = 1: uncompressed block          │
+│ Bits 0-30:  byte length of block data   │
 ├─────────────────────────────────────────┤
 │ Compressed data OR uncompressed records │
 └─────────────────────────────────────────┘
 ```
 
-If `compressed_size == 0`, the block is stored uncompressed.
+If **bit 31** of the block length is set (`0x80000000`), the block data is stored uncompressed and the lower 31 bits give the byte length. Otherwise, the full 32-bit value is the compressed data length.
 
 ### LZF Algorithm
 
@@ -219,6 +220,53 @@ Offset = ((control & 0x1F) << 8) | next_byte
 Records are packed into blocks up to **0x40000 bytes (262,144 bytes)** of uncompressed data. When a block would exceed this limit, a new block is started.
 
 Each block is independently compressed and can be decompressed without prior blocks.
+
+---
+
+## Spatial Index Files
+
+Files with **File ID = `0x00440205`** contain a spatial index, used by Alteryx for spatial search acceleration. The spatial index introduces additional data within the LZF block stream that readers must account for.
+
+### Identification
+
+- **`0x00440204`** — Standard WrigleyDB, no spatial index
+- **`0x00440205`** — WrigleyDB **with** spatial index
+
+The header field at bytes 88–95 (`spatial_index_pos`) holds the file offset of the spatial index metadata structure. A value of 0 indicates no spatial index even if the file ID is `0x00440205`.
+
+### Interleaved Spatial Grid Blocks
+
+When a spatial index is present, the LZF block stream may contain **spatial index grid blocks** interleaved with record blocks. These spatial grid blocks contain bounding-box and grid-cell data for the spatial index — they are **not** record data.
+
+```
+┌──────────────────────────────────┐
+│  Record blocks 0..N              │
+├──────────────────────────────────┤
+│  Spatial grid blocks (optional)  │  ← NOT record data
+├──────────────────────────────────┤
+│  Record blocks N+1..M            │
+├──────────────────────────────────┤
+│  Spatial grid blocks (optional)  │  ← NOT record data
+├──────────────────────────────────┤
+│  ...                             │
+└──────────────────────────────────┘
+```
+
+Spatial grid blocks are inserted periodically (e.g. every 2048 record blocks) and typically decompress to the standard block size of 262,144 bytes each. Their content begins with grid metadata (counts, coordinate bounding boxes) rather than record field data.
+
+### Reader Implications
+
+Readers **must not** treat spatial grid blocks as record data. Two strategies:
+
+1. **Streaming readers**: After decompressing each block, validate that it starts with a plausible record (parse the first record's fixed portion and variable-length size). If the variable-length size overflows the block, skip the block as spatial data.
+
+2. **Bulk readers**: Decompress all blocks and attempt to parse all `num_records` records. If the parse fails (some "records" have implausibly large variable-length sizes due to spatial data being misinterpreted), re-decompress with spatial block filtering enabled.
+
+The spatial grid blocks are only present in files that (a) have `file_id = 0x00440205`, (b) have `spatial_index_pos > 0`, and (c) contain variable-length fields (typically `SpatialObj`). Files with `file_id = 0x00440204` never contain spatial grid blocks, even if they have `SpatialObj` columns.
+
+### Prevalence
+
+Spatial indices are relatively rare. In a corpus of 1011 E1 files, only 2 contained interleaved spatial grid blocks (both with `SpatialObj` columns and large record counts).
 
 ---
 
