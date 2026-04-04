@@ -253,26 +253,26 @@ impl YxdbReader {
                 // Version 0: no block framing — records stored directly in the stream
                 Cow::Borrowed(raw_data)
             }
-            Some(algo) => Cow::Owned(decompress_blocks(raw_data, algo)?),
+            Some(algo) => {
+                let mut data = decompress_blocks(raw_data, algo, None)?;
+
+                // For spatial-index files with variable-length records: verify
+                // that all records parse correctly.  If not, the block stream
+                // contains interleaved spatial grid blocks that must be
+                // filtered out and the data re-decompressed.
+                if self.header.has_spatial_index() && has_var {
+                    if !records_fit(&data, fixed_size, num_records) {
+                        data = decompress_blocks(raw_data, algo, Some(fixed_size))?;
+                    }
+                }
+
+                Cow::Owned(data)
+            }
         };
 
         // Phase 3: Compute record boundaries
         let bounds = if has_var {
-            let mut ends = Vec::with_capacity(num_records + 1);
-            ends.push(0usize);
-            let mut offset = 0usize;
-            for _ in 0..num_records {
-                let var_start = offset + fixed_size;
-                if var_start + 4 > all_data.len() {
-                    break;
-                }
-                let var_len =
-                    u32::from_le_bytes(all_data[var_start..var_start + 4].try_into().unwrap())
-                        as usize;
-                offset = var_start + 4 + var_len;
-                ends.push(offset);
-            }
-            RecordBounds::Variable { ends }
+            scan_variable_record_bounds(&all_data, fixed_size, num_records)
         } else {
             RecordBounds::Fixed { fixed_size }
         };
@@ -474,44 +474,143 @@ impl YxdbReader {
     /// Read and decompress the next compressed block from the stream.
     ///
     /// Only called when `self.compression` is `Some(_)` (block-framed data).
+    /// When the file has a spatial index, spatial grid blocks are automatically
+    /// detected and skipped so the caller sees only record data.
     fn read_next_lzf_block(&mut self) -> Result<()> {
         let algo = self
             .compression
             .expect("read_next_lzf_block called with no compression");
 
-        // Read 4-byte block length
-        let mut len_buf = [0u8; 4];
-        self.stream.read_exact(&mut len_buf)?;
-        let raw_len = u32::from_le_bytes(len_buf) as usize;
+        loop {
+            // Read 4-byte block length
+            let mut len_buf = [0u8; 4];
+            self.stream.read_exact(&mut len_buf)?;
+            let raw_len = u32::from_le_bytes(len_buf) as usize;
 
-        let is_uncompressed = raw_len & 0x80000000 != 0;
-        let block_len = raw_len & 0x7FFFFFFF;
+            let is_uncompressed = raw_len & 0x80000000 != 0;
+            let block_len = raw_len & 0x7FFFFFFF;
 
-        if is_uncompressed {
-            // Store directly
-            if self.lzf_out.len() < block_len {
-                self.lzf_out.resize(block_len, 0);
+            if is_uncompressed {
+                // Store directly
+                if self.lzf_out.len() < block_len {
+                    self.lzf_out.resize(block_len, 0);
+                }
+                self.stream.read_exact(&mut self.lzf_out[..block_len])?;
+                self.lzf_out_size = block_len;
+            } else {
+                // Reuse the lzf_in buffer to avoid per-block heap allocation
+                self.lzf_in.resize(block_len, 0);
+                self.stream.read_exact(&mut self.lzf_in[..block_len])?;
+                // Ensure output buffer is large enough for oversized blocks.
+                // Standard blocks decompress to at most BLOCK_SIZE (262144),
+                // but oversized records may produce larger output.
+                let min_out = 262144usize.max(block_len * 10);
+                if self.lzf_out.len() < min_out {
+                    self.lzf_out.resize(min_out, 0);
+                }
+                self.lzf_out_size =
+                    lzf::decompress_block(algo, &self.lzf_in[..block_len], &mut self.lzf_out)?;
             }
-            self.stream.read_exact(&mut self.lzf_out[..block_len])?;
-            self.lzf_out_size = block_len;
-        } else {
-            // Reuse the lzf_in buffer to avoid per-block heap allocation
-            self.lzf_in.resize(block_len, 0);
-            self.stream.read_exact(&mut self.lzf_in[..block_len])?;
-            // Ensure output buffer is large enough for oversized blocks.
-            // Standard blocks decompress to at most BLOCK_SIZE (262144),
-            // but oversized records may produce larger output.
-            let min_out = 262144usize.max(block_len * 10);
-            if self.lzf_out.len() < min_out {
-                self.lzf_out.resize(min_out, 0);
+
+            // Skip spatial index grid blocks (present in files with file_id = 0x00440205).
+            if self.header.has_spatial_index()
+                && self.has_var
+                && !is_record_block(&self.lzf_out[..self.lzf_out_size], self.fixed_size)
+            {
+                continue;
             }
-            self.lzf_out_size =
-                lzf::decompress_block(algo, &self.lzf_in[..block_len], &mut self.lzf_out)?;
+
+            self.lzf_out_idx = 0;
+            return Ok(());
         }
-
-        self.lzf_out_idx = 0;
-        Ok(())
     }
+}
+
+// ── Record scan helpers ───────────────────────────────────────────────
+
+/// Check whether `num_records` variable-length records can be parsed from `data`.
+///
+/// Returns `true` if all records parse successfully (each record's var_len
+/// stays within bounds). Used as a fast pre-check before the full record
+/// boundary scan.
+fn records_fit(data: &[u8], fixed_size: usize, num_records: usize) -> bool {
+    let mut offset = 0usize;
+    for _ in 0..num_records {
+        let var_start = offset + fixed_size;
+        if var_start + 4 > data.len() {
+            return false;
+        }
+        let var_len =
+            u32::from_le_bytes(data[var_start..var_start + 4].try_into().unwrap()) as usize;
+        offset = var_start + 4 + var_len;
+        if offset > data.len() {
+            return false;
+        }
+    }
+    true
+}
+
+/// Scan variable-length records and return their boundary offsets.
+fn scan_variable_record_bounds(
+    data: &[u8],
+    fixed_size: usize,
+    num_records: usize,
+) -> RecordBounds {
+    let mut ends = Vec::with_capacity(num_records + 1);
+    ends.push(0usize);
+    let mut offset = 0usize;
+    for _ in 0..num_records {
+        let var_start = offset + fixed_size;
+        if var_start + 4 > data.len() {
+            break;
+        }
+        let var_len =
+            u32::from_le_bytes(data[var_start..var_start + 4].try_into().unwrap()) as usize;
+        offset = var_start + 4 + var_len;
+        ends.push(offset);
+    }
+    RecordBounds::Variable { ends }
+}
+
+// ── Spatial index block detection ─────────────────────────────────────
+
+/// Check whether a decompressed LZF block contains record data.
+///
+/// Files with `file_id = 0x00440205` (WrigleyDB with spatial index) interleave
+/// spatial index grid blocks within the LZF block stream.  These blocks contain
+/// bounding-box / grid-cell data for the spatial index, **not** record data, and
+/// must be excluded from the record stream.
+///
+/// Detection heuristic: every record block begins at a record boundary, so we
+/// can parse the first few records from the start of the block.  If multiple
+/// consecutive records all have variable-length sizes that fit within the
+/// block, it is record data.  If any "record" has a variable length that
+/// overflows the block, the block is spatial data.  Checking more than one
+/// record makes the heuristic robust even when `fixed_size` is small and a
+/// single probe could accidentally align with valid-looking bytes in the
+/// spatial grid.
+#[inline]
+fn is_record_block(block_data: &[u8], fixed_size: usize) -> bool {
+    // Verify up to 3 consecutive records starting from byte 0.
+    const PROBES: usize = 3;
+    let mut offset = 0usize;
+    for _ in 0..PROBES {
+        if offset + fixed_size + 4 > block_data.len() {
+            // Not enough room for another record — all previous probes passed.
+            break;
+        }
+        let var_len = u32::from_le_bytes(
+            block_data[offset + fixed_size..offset + fixed_size + 4]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let record_end = offset + fixed_size + 4 + var_len;
+        if record_end > block_data.len() {
+            return false; // variable data overflows the block → not record data
+        }
+        offset = record_end;
+    }
+    true
 }
 
 // ── Block decompression ───────────────────────────────────────────────
@@ -520,7 +619,16 @@ impl YxdbReader {
 ///
 /// Parses 4-byte block length headers, decompresses blocks in parallel
 /// for large files, and compacts the result into a single contiguous buffer.
-fn decompress_blocks(raw_data: &[u8], algo: CompressionAlgorithm) -> Result<Vec<u8>> {
+///
+/// When `spatial_record_filter` is `Some(fixed_size)`, spatial index grid
+/// blocks (present in files with `file_id = 0x00440205`) are detected after
+/// decompression and excluded from the compacted output, so the returned
+/// buffer contains only record data.
+fn decompress_blocks(
+    raw_data: &[u8],
+    algo: CompressionAlgorithm,
+    spatial_record_filter: Option<usize>,
+) -> Result<Vec<u8>> {
     // Parse block boundaries (sequential scan — just reading 4-byte lengths)
     let mut blocks: Vec<(usize, usize, bool)> = Vec::new(); // (data_offset, length, is_uncompressed)
     let mut pos = 0usize;
@@ -588,7 +696,7 @@ fn decompress_blocks(raw_data: &[u8], algo: CompressionAlgorithm) -> Result<Vec<
     }
     let ptr = SendSyncPtr(all_data_ptr);
 
-    let block_sizes: Vec<usize> = if num_blocks >= MIN_BLOCKS_FOR_PAR {
+    let mut block_sizes: Vec<usize> = if num_blocks >= MIN_BLOCKS_FOR_PAR {
         let results: Result<Vec<usize>> = blocks
             .par_iter()
             .enumerate()
@@ -625,6 +733,24 @@ fn decompress_blocks(raw_data: &[u8], algo: CompressionAlgorithm) -> Result<Vec<
             .collect();
         results?
     };
+
+    // Phase 2.5: Filter spatial index grid blocks.
+    //
+    // Files with a spatial index (file_id = 0x00440205) interleave spatial
+    // grid blocks within the LZF block stream.  These blocks contain spatial
+    // index data (bounding boxes, grid cells), not record data.  Setting
+    // their size to 0 causes the compaction step below to skip them.
+    if let Some(fixed_size) = spatial_record_filter {
+        for idx in 0..block_sizes.len() {
+            let actual_size = block_sizes[idx];
+            if actual_size > 0 {
+                let start = block_offsets[idx];
+                if !is_record_block(&all_data[start..start + actual_size], fixed_size) {
+                    block_sizes[idx] = 0;
+                }
+            }
+        }
+    }
 
     // Compact: close gaps between blocks where actual size < allocated BLOCK_SIZE.
     let mut write_pos = 0usize;
