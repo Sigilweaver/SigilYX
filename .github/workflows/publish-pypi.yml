@@ -81,7 +81,7 @@ jobs:
           perl -i -pe "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" \
             sigilyx/Cargo.toml sigilyx-python/Cargo.toml pyproject.toml
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
@@ -139,7 +139,7 @@ jobs:
           key: wheels-${{ matrix.os }}-${{ matrix.target }}
 
       # abi3 wheels only need one Python present for maturin to drive the build
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
