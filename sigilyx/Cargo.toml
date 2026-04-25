@@ -27,7 +27,7 @@ polars = { version = "0.53", features = [
 ] }
 quick-xml = "0.39"
 thiserror = "2"
-rayon = "1.10"
+rayon = "1.12"
 memmap2 = "0.9"
 snap = "1"
 arrow = { version = "0.53", package = "polars-arrow", default-features = false }
