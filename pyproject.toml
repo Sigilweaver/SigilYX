@@ -53,4 +53,4 @@ include = ["LICENSE", "python/README.md"]
 testpaths = ["tests"]
 
 [dependency-groups]
-dev = ["pyarrow>=14.0", "psutil>=5.9"]
+dev = ["pyarrow>=14.0", "psutil>=7.2.2"]
