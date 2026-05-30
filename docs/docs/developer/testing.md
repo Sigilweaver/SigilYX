@@ -58,19 +58,9 @@ pytest tests/test_read.py -v
 pytest tests/ -k "test_polars_plugin" -v
 ```
 
-## Cross-Implementation Tests
-
-If you have the C++ reference implementations available:
-
-```bash
-python benchmarks/test_cross_impl.py
-```
-
-This reads test files with both SigilYX and the C++ readers and verifies that the output matches exactly. See `benchmarks/README.md` for environment setup.
-
 ## Test Data
 
-Test files live in `sigilyx/test_files/`. These are small YXDB files covering various field type combinations. Benchmark data (100K rows) is generated separately - see [Benchmarks](/developer/benchmarks).
+Test files live in `sigilyx/test_files/`. These are small YXDB files covering various field type combinations.
 
 ## Adding Tests
 

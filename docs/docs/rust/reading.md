@@ -105,7 +105,7 @@ for record in reader {
 }
 ```
 
-The row reader is slower than the columnar reader (see [Performance](/performance)) but gives you per-record control without materialization.
+The row reader is slower than the columnar reader but gives you per-record control without materialization.
 
 ## Arrow IPC Interop
 

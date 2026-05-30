@@ -4,10 +4,10 @@ build-backend = "maturin"
 
 [project]
 name = "sigilyx"
-version = "0.0.0"
-description = "SigilYX — High-performance YXDB (E1) file reader and writer."
+version = "0.2.0"
+description = "YXDB reader and writer for Python, backed by a Rust core."
 readme = "python/README.md"
-license = { text = "AGPL-3.0-only" }
+license = { text = "Apache-2.0" }
 authors = [{ name = "Sigilweaver" }]
 requires-python = ">=3.9"
 dependencies = ["polars>=0.20"]
@@ -16,7 +16,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -33,10 +33,10 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://sigilweaver.app/sigilyx/"
-Repository = "https://github.com/Sigilweaver/sigilyx"
+Repository = "https://github.com/Sigilweaver/SigilYX"
 Documentation = "https://sigilweaver.app/sigilyx/"
-Issues = "https://github.com/Sigilweaver/sigilyx/issues"
-Changelog = "https://github.com/Sigilweaver/sigilyx/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Sigilweaver/SigilYX/issues"
+Changelog = "https://github.com/Sigilweaver/SigilYX/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 arrow = ["pyarrow>=14.0"]

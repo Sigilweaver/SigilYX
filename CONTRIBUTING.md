@@ -5,8 +5,8 @@ We welcome contributions! This page covers the essentials — see the full [Cont
 ## Quick Start
 
 ```bash
-git clone https://github.com/Sigilweaver/sigilyx.git
-cd sigilyx
+git clone https://github.com/Sigilweaver/SigilYX.git
+cd SigilYX
 python -m venv .venv
 
 # Activate the virtual environment:
@@ -19,7 +19,7 @@ maturin develop --release
 
 ## Before You Start
 
-1. Check [GitHub Issues](https://github.com/Sigilweaver/sigilyx/issues) for existing reports
+1. Check [GitHub Issues](https://github.com/Sigilweaver/SigilYX/issues) for existing reports
 2. For significant changes, open an issue first to discuss the approach
 
 ## Code Style
@@ -42,4 +42,4 @@ maturin develop --release
 
 ## License
 
-By submitting a pull request, you agree that your contributions are licensed under AGPL-3.0, consistent with the project license.
+By submitting a pull request, you agree that your contributions are licensed under Apache-2.0, consistent with the project license.

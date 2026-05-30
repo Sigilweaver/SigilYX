@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+title: "SigilYX: A Rust reader and writer for Alteryx YXDB files"
+message: >
+  If you use SigilYX in your research, please cite it using the metadata
+  below. Citation is encouraged and appreciated but not legally required.
+type: software
+authors:
+  - alias: Sigilweaver
+    website: "https://github.com/Sigilweaver"
+repository-code: "https://github.com/Sigilweaver/SigilYX"
+url: "https://sigilweaver.app/sigilyx/"
+abstract: >
+  SigilYX is a standalone, cross-platform reader and writer for Alteryx
+  YXDB files. The core is implemented in Rust and provides full read and
+  write support for the E1 (original engine) YXDB layout including all
+  17 field types; experimental read support for the E2 (AMP engine)
+  layout is also included. Python bindings built on PyO3 integrate
+  directly with Polars, PyArrow, and Pandas. No native Alteryx Designer
+  installation is required.
+license: "Apache-2.0"
+license-url: "https://github.com/Sigilweaver/SigilYX/blob/main/LICENSE"
+date-released: "2026-05-30"
+version: "0.2.0"
+keywords:
+  - YXDB
+  - Alteryx
+  - data engineering
+  - ETL
+  - file format
+  - Polars
+  - Apache Arrow
+  - Rust
+  - Python

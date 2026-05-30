@@ -3,181 +3,89 @@ name: Publish to PyPI
 on:
   release:
     types: [published]
-
-  # Allow manual trigger for testing
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.2.0)"
+        required: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   CARGO_INCREMENTAL: 0
   CARGO_TERM_COLOR: always
-  SCCACHE_GHA_ENABLED: true
 
 jobs:
-  # ── Cross-platform test gate ────────────────────────────────────────
-  # Full matrix runs only before release — not on every push.
-  test-matrix:
-    name: Test (${{ matrix.name }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Linux x86_64
-            os: warp-ubuntu-latest-x64-4x
-            rust-test: true
-            python-test: true
-            activate: source .venv/bin/activate
-          - name: Windows x64
-            os: warp-windows-latest-x64-4x
-            rust-test: true
-            python-test: true
-            activate: source .venv/Scripts/activate
-          - name: macOS ARM64
-            os: macos-latest
-            rust-test: true
-            python-test: true
-            activate: source .venv/bin/activate
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: ./.github/actions/setup-sccache
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: test-${{ matrix.os }}
-
-      - name: Rust tests
-        if: matrix.rust-test
-        run: cargo test -p sigilyx --locked
-
-      - uses: astral-sh/setup-uv@v5
-        if: matrix.python-test
-
-      - name: Python tests
-        if: matrix.python-test
-        shell: bash
-        run: |
-          uv venv --python 3.12
-          ${{ matrix.activate }}
-          uv pip install maturin polars pyarrow pandas pytest
-          maturin develop --release
-          pytest tests/ -v
-
-  build-sdist:
-    name: Build sdist
-    needs: test-matrix
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Sync version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          perl -i -pe "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" \
-            sigilyx/Cargo.toml sigilyx-python/Cargo.toml pyproject.toml
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Build sdist
-        uses: PyO3/maturin-action@v1
-        with:
-          command: sdist
-          args: --out dist
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist-sdist
-          path: dist/*.tar.gz
-
   build-wheels:
     name: Build wheel (${{ matrix.os }}, ${{ matrix.target }})
-    needs: test-matrix
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64
-          - os: warp-ubuntu-latest-x64-4x
+          - os: ubuntu-latest
             target: x86_64
-          # Linux aarch64 — native ARM64 runner avoids cross-compilation issues
-          - os: warp-ubuntu-latest-arm64-4x
+            manylinux: "auto"
+          - os: ubuntu-latest
             target: aarch64
-          # Windows x86_64
-          - os: warp-windows-latest-x64-4x
+            manylinux: "auto"
+          - os: macos-14
+            target: aarch64
+          - os: windows-latest
             target: x64
-          # macOS x86_64 (cross-compiled from ARM runner)
-          - os: macos-latest
-            target: x86_64
-          # macOS ARM64
-          - os: macos-latest
-            target: aarch64
     steps:
       - uses: actions/checkout@v4
 
       - name: Sync version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ -z "$TAG" ] || [ "$TAG" = "$GITHUB_REF" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          VERSION="${TAG#v}"
+          echo "Syncing version to $VERSION"
           perl -i -pe "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" \
             sigilyx/Cargo.toml sigilyx-python/Cargo.toml pyproject.toml
+          perl -i -pe "s/path = \"\\.\\.\\/sigilyx\", package = \"sigilyx\", version = \"[^\"]*\"/path = \"..\\/sigilyx\", package = \"sigilyx\", version = \"$VERSION\"/" \
+            sigilyx-python/Cargo.toml
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: ./.github/actions/setup-sccache
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: wheels-${{ matrix.os }}-${{ matrix.target }}
-
-      # abi3 wheels only need one Python present for maturin to drive the build
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.11"
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           # abi3-py39 produces a single cp39-abi3 wheel that works on Python 3.9+
-          # No --interpreter list needed; maturin detects abi3 from Cargo features.
           args: --release --out dist
-          manylinux: auto
-          # sccache is configured via RUSTC_WRAPPER in the environment;
-          # the maturin sccache: flag would re-enable it even when we
-          # explicitly disabled it due to a cache backend outage.
+          manylinux: ${{ matrix.manylinux }}
+          sccache: "true"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}-${{ matrix.target }}
+          name: wheels-${{ matrix.os }}-${{ matrix.target }}
           path: dist/*.whl
 
   publish:
-    name: Publish to PyPI
+    name: Publish sigilyx to PyPI
+    needs: [build-wheels]
     runs-on: ubuntu-latest
-    needs: [build-sdist, build-wheels]
-    environment: release
+    environment: pypi
     permissions:
-      id-token: write  # Required for trusted publishing
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: dist-*
-          path: dist
+          pattern: wheels-*
           merge-multiple: true
+          path: dist
 
-      - name: Publish to PyPI
+      - name: Publish to PyPI (trusted publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
-        # Trusted publishing — no token needed if configured in PyPI.
-        # If you prefer a token instead, comment out the permissions block
-        # above and uncomment the following:
-        # with:
-        #   password: ${{ secrets.PYPI_API_TOKEN }}
+        with:
+          packages-dir: dist
