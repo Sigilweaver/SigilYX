@@ -683,7 +683,7 @@ impl PyYxdbRowReader {
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("reader is closed"))?;
         let values = reader.read_all().map_err(to_py_err)?;
         let dict = PyDict::new(py);
-        for (field, val) in reader.fields().iter().zip(values.into_iter()) {
+        for (field, val) in reader.fields().iter().zip(values) {
             dict.set_item(&field.name, field_value_to_py(py, val))?;
         }
         Ok(dict.into())
