@@ -10,7 +10,7 @@ readme = "python/README.md"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Sigilweaver" }]
 requires-python = ">=3.9"
-dependencies = ["polars>=0.20"]
+dependencies = ["polars>=1.36.1"]
 keywords = ["yxdb", "alteryx", "polars", "dataframe", "etl", "arrow"]
 classifiers = [
     "Development Status :: 4 - Beta",
