@@ -3,10 +3,11 @@
 *YXDB reader and writer for Rust, with Python bindings.*
 
 [![CI](https://github.com/Sigilweaver/SigilYX/actions/workflows/ci.yml/badge.svg)](https://github.com/Sigilweaver/SigilYX/actions/workflows/ci.yml)
-[![Crates.io](https://img.shields.io/crates/v/sigilyx)](https://crates.io/crates/sigilyx)
-[![PyPI](https://img.shields.io/pypi/v/sigilyx)](https://pypi.org/project/sigilyx/)
+[![crates.io](https://img.shields.io/crates/v/sigilyx.svg)](https://crates.io/crates/sigilyx)
+[![PyPI](https://img.shields.io/pypi/v/sigilyx.svg)](https://pypi.org/project/sigilyx/)
+[![docs.rs](https://img.shields.io/docsrs/sigilyx)](https://docs.rs/sigilyx)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![MSRV](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust MSRV](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
 
 [YXDB](SPECIFICATION-E1.md) is the native binary format used by [Alteryx](https://www.alteryx.com/) Designer. SigilYX is a standalone, cross-platform library that reads and writes `.yxdb` files. The core is written in Rust; Python bindings are built on top with [PyO3](https://pyo3.rs/) and integrate with [Polars](https://pola.rs/), [PyArrow](https://arrow.apache.org/docs/python/), and [Pandas](https://pandas.pydata.org/).
 
