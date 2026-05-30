@@ -12,7 +12,7 @@
 
 ### Sourcing Methodology
 
-We started by looking for `.yxdb` files on GitHub — just searching for the extension and seeing what turned up. Early on, we tried opening some of these with [OpenYXDB](https://github.com/Zynex-Software/OpenYXDB) (MIT-licensed C++ reader). Most opened fine, but a handful would fail immediately. Hex-dumping one of the failures showed the magic string `"Alteryx e2 Database file"` instead of `"Alteryx Database File"` — that’s how we discovered E2 was a distinct binary format.
+We started by looking for `.yxdb` files on GitHub — just searching for the extension and seeing what turned up. Early on, we tried opening some of these with [yxdb-py](https://github.com/tlarsendataguy-yxdb/yxdb-py) (MIT-licensed Python reader). Most opened fine, but a handful would fail immediately. Hex-dumping one of the failures showed the magic string `"Alteryx e2 Database file"` instead of `"Alteryx Database File"` — that’s how we discovered E2 was a distinct binary format.
 
 From there we scaled the search: looking for repos that contained `.yxdb` files whose first bytes matched the E2 magic. Every sourced file has a provenance entry below with SHA-256 hash, archive URL, and independence attestation — see [Provenance Log](#provenance-log).
 
