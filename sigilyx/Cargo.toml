@@ -1,12 +1,12 @@
 [package]
 name = "sigilyx"
-version = "0.0.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.75"
-description = "High-performance, standalone reader/writer for Alteryx .yxdb (E1) files."
-license = "AGPL-3.0-only"
+description = "Reader and writer for Alteryx .yxdb (E1, with experimental E2 read) files."
+license = "Apache-2.0"
 authors = ["Sigilweaver"]
-repository = "https://github.com/Sigilweaver/sigilyx"
+repository = "https://github.com/Sigilweaver/SigilYX"
 homepage = "https://sigilweaver.app/sigilyx/"
 documentation = "https://docs.rs/sigilyx"
 readme = "README.md"

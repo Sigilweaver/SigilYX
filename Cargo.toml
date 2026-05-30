@@ -1,5 +1,5 @@
 [workspace]
-members = ["sigilyx", "sigilyx-python", "benchmarks/rust"]
+members = ["sigilyx", "sigilyx-python"]
 resolver = "2"
 
 [profile.release]

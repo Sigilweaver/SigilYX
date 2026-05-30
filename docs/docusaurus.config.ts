@@ -4,7 +4,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'SigilYX',
-  tagline: 'High-performance YXDB reader and writer in Rust, with Python bindings',
+  tagline: 'YXDB reader and writer for Rust, with Python bindings',
   favicon: 'img/favicon.ico',
 
   future: {
@@ -57,7 +57,7 @@ const config: Config = {
 
   themeConfig: {
     metadata: [
-      { name: 'description', content: 'SigilYX — high-performance YXDB reader and writer in Rust with Python bindings for Polars, PyArrow, and Pandas.' },
+      { name: 'description', content: 'SigilYX - YXDB reader and writer in Rust with Python bindings for Polars, PyArrow, and Pandas.' },
       { name: 'keywords', content: 'yxdb, sigilyx, alteryx, polars, python, rust, sigilweaver' },
     ],
     colorMode: {
@@ -91,7 +91,7 @@ const config: Config = {
           position: 'right',
         },
         {
-          href: 'https://github.com/Sigilweaver/sigilyx',
+          href: 'https://github.com/Sigilweaver/SigilYX',
           label: 'GitHub',
           position: 'right',
         },
@@ -139,7 +139,7 @@ const config: Config = {
           items: [
             {
               label: 'GitHub',
-              href: 'https://github.com/Sigilweaver/sigilyx',
+              href: 'https://github.com/Sigilweaver/SigilYX',
             },
             {
               label: 'GitHub Discussions',
@@ -151,8 +151,8 @@ const config: Config = {
           title: 'Legal',
           items: [
             {
-              label: 'License (AGPL-3.0)',
-              href: 'https://github.com/Sigilweaver/sigilyx/blob/main/LICENSE',
+              label: 'License (Apache-2.0)',
+              href: 'https://github.com/Sigilweaver/SigilYX/blob/main/LICENSE',
             },
             {
               label: 'Terms of Use',

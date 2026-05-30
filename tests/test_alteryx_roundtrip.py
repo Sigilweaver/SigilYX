@@ -12,8 +12,8 @@ Tests are organized into 4 tiers:
 4. Targeted type coverage — specific field types that are tricky
 
 Requirements:
-    - C++ dump tool: benchmarks/cpp/alteryx_openyxdb_dump.exe
-    - Build with: benchmarks/cpp/build_alteryx_dump.bat
+    - C++ dump tool (built separately, not bundled with the repo)
+    - Build with the C++ harness from an earlier benchmark release
 
 All tests are skipped if the dump tool is not available, so CI can run
 without the C++ toolchain.

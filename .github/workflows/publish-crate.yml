@@ -3,48 +3,56 @@ name: Publish to crates.io
 on:
   release:
     types: [published]
-
-  # Allow manual trigger for testing
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.2.0)"
+        required: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   CARGO_INCREMENTAL: 0
   CARGO_TERM_COLOR: always
-  SCCACHE_GHA_ENABLED: true
 
 jobs:
   publish:
-    name: Publish sigilyx crate
+    name: Publish sigilyx to crates.io
     runs-on: ubuntu-latest
-    environment: release
+    environment: crates-io
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
       - name: Sync version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ -z "$TAG" ] || [ "$TAG" = "$GITHUB_REF" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          VERSION="${TAG#v}"
+          echo "Syncing version to $VERSION"
           perl -i -pe "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" \
             sigilyx/Cargo.toml sigilyx-python/Cargo.toml pyproject.toml
+          perl -i -pe "s/path = \"\\.\\.\\/sigilyx\", package = \"sigilyx\", version = \"[^\"]*\"/path = \"..\\/sigilyx\", package = \"sigilyx\", version = \"$VERSION\"/" \
+            sigilyx-python/Cargo.toml
 
       - uses: dtolnay/rust-toolchain@stable
-
-      - uses: ./.github/actions/setup-sccache
       - uses: Swatinem/rust-cache@v2
 
       - name: Regenerate lock file after version sync
-        if: startsWith(github.ref, 'refs/tags/v')
         run: cargo generate-lockfile
 
-      - name: Dry-run publish
-        run: cargo publish --dry-run --allow-dirty --locked -p sigilyx
-
-      - name: Publish to crates.io
-        run: cargo publish --allow-dirty --locked -p sigilyx
+      - name: cargo publish sigilyx
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if cargo publish -p sigilyx --allow-dirty --token "$CARGO_REGISTRY_TOKEN" 2>&1 | tee out.log; then
+            exit 0
+          fi
+          grep -qi 'already uploaded\|already exists' out.log && exit 0 || exit 1

@@ -1,7 +1,0 @@
-[workspace]
-name = "sigilyx-benchmarks"
-channels = ["conda-forge"]
-platforms = ["win-64"]
-
-[dependencies]
-cmake = "*"
