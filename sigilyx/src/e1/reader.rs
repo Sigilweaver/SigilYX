@@ -551,11 +551,7 @@ fn records_fit(data: &[u8], fixed_size: usize, num_records: usize) -> bool {
 }
 
 /// Scan variable-length records and return their boundary offsets.
-fn scan_variable_record_bounds(
-    data: &[u8],
-    fixed_size: usize,
-    num_records: usize,
-) -> RecordBounds {
+fn scan_variable_record_bounds(data: &[u8], fixed_size: usize, num_records: usize) -> RecordBounds {
     let mut ends = Vec::with_capacity(num_records + 1);
     ends.push(0usize);
     let mut offset = 0usize;
