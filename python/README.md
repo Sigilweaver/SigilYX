@@ -1,16 +1,16 @@
 # sigilyx
 
-*High-performance YXDB reader and writer for Python.*
+*YXDB reader and writer for Python.*
 
 [![PyPI](https://img.shields.io/pypi/v/sigilyx)](https://pypi.org/project/sigilyx/)
 [![Python](https://img.shields.io/pypi/pyversions/sigilyx)](https://pypi.org/project/sigilyx/)
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](https://github.com/Sigilweaver/sigilyx/blob/main/LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/Sigilweaver/SigilYX/blob/main/LICENSE)
 
 YXDB is the native binary format used by [Alteryx](https://www.alteryx.com/) Designer. `sigilyx` reads and writes `.yxdb` files using [Polars](https://pola.rs/) DataFrames, [PyArrow](https://arrow.apache.org/docs/python/) Tables, or [Pandas](https://pandas.pydata.org/) DataFrames.
 
-The core is written in Rust — parallel LZF decompression, SIMD UTF-16→UTF-8 transcoding, direct Arrow array construction. No native Alteryx Designer installation required.
+The core is written in Rust. No native Alteryx Designer installation is required.
 
-> **Format scope:** `sigilyx` has full read/write support for the **E1** (original engine) YXDB layout. **Experimental** read support for **E2** (AMP engine) is included — 13 field types have been verified against real E2 files; 4 rare types (Blob, SpatialObj, Time, WString) have speculative decoders behind an opt-in flag. E2 writing is not yet supported. See [SPECIFICATION-E2.md](https://github.com/Sigilweaver/sigilyx/blob/main/SPECIFICATION-E2.md) for details.
+> **Format scope:** `sigilyx` has full read/write support for the **E1** (original engine) YXDB layout. **Experimental** read support for **E2** (AMP engine) is included - 13 field types have been verified against real E2 files; 4 rare types (Blob, SpatialObj, Time, WString) have speculative decoders behind an opt-in flag. E2 writing is not yet supported. See [SPECIFICATION-E2.md](https://github.com/Sigilweaver/SigilYX/blob/main/SPECIFICATION-E2.md) for details.
 
 ## Installation
 
@@ -162,35 +162,14 @@ n = yx.record_count("data.yxdb")
 | `Blob` | `Binary` / `LargeBinary` | Variable-length binary |
 | `SpatialObj` | `Binary` / `LargeBinary` | Geometry as ISO WKB or raw SHP bytes |
 
-## Performance
-
-100,000 rows, 100 runs, median. SigilYX (Python) vs pure-Python yxdb-py:
-
-| Shape | SigilYX | yxdb-py | Speedup |
-|-------|--------:|--------:|--------:|
-| Narrow (2 cols) | 2.8 ms | 309 ms | **111×** |
-| Mixed (8 cols) | 22.2 ms | 4,333 ms | **195×** |
-| String-heavy (5 cols) | 52.2 ms | 10,659 ms | **204×** |
-
-SigilYX (Python) vs open-source implementations in other languages:
-
-| Shape | SigilYX | Best C++ | Go | .NET |
-|-------|--------:|---------:|---:|-----:|
-| Narrow (2 cols) | **2.8 ms** | 2.2 ms | 4.5 ms | 8.7 ms |
-| Numeric (5 cols) | **5.1 ms** | 4.3 ms | 7.2 ms | 11.6 ms |
-| Mixed (8 cols) | **22.2 ms** | 39.9 ms | 130.3 ms | 108.4 ms |
-| String-heavy (5 cols) | **52.2 ms** | 85.3 ms | 344.6 ms | 204.6 ms |
-
-Full methodology and results: [PERFORMANCE.md](https://github.com/Sigilweaver/sigilyx/blob/main/PERFORMANCE.md)
-
 ## Links
 
-- **GitHub:** https://github.com/Sigilweaver/sigilyx
+- **GitHub:** https://github.com/Sigilweaver/SigilYX
 - **Documentation:** https://sigilweaver.app/sigilyx/
 - **Rust crate (crates.io):** https://crates.io/crates/sigilyx
-- **Changelog:** https://github.com/Sigilweaver/sigilyx/blob/main/CHANGELOG.md
-- **Issues:** https://github.com/Sigilweaver/sigilyx/issues
+- **Changelog:** https://github.com/Sigilweaver/SigilYX/blob/main/CHANGELOG.md
+- **Issues:** https://github.com/Sigilweaver/SigilYX/issues
 
 ## License
 
-[GNU Affero General Public License v3.0](https://github.com/Sigilweaver/sigilyx/blob/main/LICENSE) (AGPL-3.0-only).
+[Apache License 2.0](https://github.com/Sigilweaver/SigilYX/blob/main/LICENSE).

@@ -1,32 +1,34 @@
 # SigilYX
 
-*High-performance YXDB reader and writer — Rust core, Python bindings.*
+*YXDB reader and writer for Rust, with Python bindings.*
 
+[![CI](https://github.com/Sigilweaver/SigilYX/actions/workflows/ci.yml/badge.svg)](https://github.com/Sigilweaver/SigilYX/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/sigilyx)](https://crates.io/crates/sigilyx)
 [![PyPI](https://img.shields.io/pypi/v/sigilyx)](https://pypi.org/project/sigilyx/)
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![MSRV](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
 
-[YXDB](SPECIFICATION-E1.md) is the native binary format used by [Alteryx](https://www.alteryx.com/) Designer. SigilYX is a standalone, cross-platform library that reads and writes `.yxdb` files — 1.2–3× faster than the fastest open-source C++ readers.
+[YXDB](SPECIFICATION-E1.md) is the native binary format used by [Alteryx](https://www.alteryx.com/) Designer. SigilYX is a standalone, cross-platform library that reads and writes `.yxdb` files. The core is written in Rust; Python bindings are built on top with [PyO3](https://pyo3.rs/) and integrate with [Polars](https://pola.rs/), [PyArrow](https://arrow.apache.org/docs/python/), and [Pandas](https://pandas.pydata.org/).
 
-> **Format scope:** SigilYX has full read/write support for the **E1** (original engine) YXDB layout. **Experimental** read support for **E2** (AMP engine) is included — 13 field types have been verified against real E2 files; 4 rare types (Blob, SpatialObj, Time, WString) have speculative decoders behind an opt-in flag. E2 writing is not yet supported. See [SPECIFICATION-E1.md](SPECIFICATION-E1.md) and [SPECIFICATION-E2.md](SPECIFICATION-E2.md) for details.
+> **Format scope:** Full read/write support for the **E1** (original engine) YXDB layout. **Experimental** read support for **E2** (AMP engine) is included: 13 field types have been verified against real E2 files; 4 rarer types (Blob, SpatialObj, Time, WString) have speculative decoders behind an opt-in flag. E2 writing is not yet supported. See [SPECIFICATION-E1.md](SPECIFICATION-E1.md) and [SPECIFICATION-E2.md](SPECIFICATION-E2.md).
 
 ## Packages
 
 | Package | Install | Docs |
 |---------|---------|------|
-| **Python** (`sigilyx`) | `pip install sigilyx` | [PyPI](https://pypi.org/project/sigilyx/) · [API docs](https://sigilweaver.app/sigilyx/) |
-| **Rust** (`sigilyx`) | `sigilyx = "0.1"` in `Cargo.toml` | [crates.io](https://crates.io/crates/sigilyx) · [docs.rs](https://docs.rs/sigilyx) |
+| **Python** (`sigilyx`) | `pip install sigilyx` | [PyPI](https://pypi.org/project/sigilyx/) - [API docs](https://sigilweaver.app/sigilyx/) |
+| **Rust** (`sigilyx`) | `sigilyx = "0.2"` in `Cargo.toml` | [crates.io](https://crates.io/crates/sigilyx) - [docs.rs](https://docs.rs/sigilyx) |
 
-## Why SigilYX?
+## What's in the box
 
-- **Fast.** Parallel LZF decompression, SIMD UTF-16→UTF-8 transcoding, direct Arrow array construction.
-- **Cross-platform.** Windows, macOS, Linux — x64 and ARM wheels, no native Alteryx install needed.
-- **Full round-trip.** Read and write all 17 E1 field types. E2 read support for 13 verified types.
-- **Multiple output formats.** Polars, PyArrow, or Pandas from the same call.
-- **Streaming.** Batched reads with constant memory; lazy scans with Polars LazyFrames.
-- **Spatial support.** `SpatialObj` columns decoded to ISO WKB (compatible with Shapely, PostGIS, GDAL).
+- **E1 + E2 format support** - read both original (E1) and AMP-engine (E2) layouts; full E1 write support.
+- **All 17 E1 field types** - including `FixedDecimal`, `WString`, `Blob`, and `SpatialObj`.
+- **Multiple output formats** - Polars, PyArrow, or Pandas from the same call.
+- **Streaming** - batched reads with constant memory, and Polars `LazyFrame` scans with projection and row-limit pushdown.
+- **Spatial** - `SpatialObj` columns decoded to ISO WKB (compatible with Shapely, PostGIS, GDAL).
+- **Cross-platform** - Linux, macOS, and Windows wheels for x64 and ARM; no native Alteryx install required.
 
-## Quick Look
+## Quick look
 
 <table>
 <tr>
@@ -58,52 +60,30 @@ write_yxdb("output.yxdb", &df, &[])?;
 </tr>
 </table>
 
-## Performance
-
-100,000 rows, 100 runs, median. SigilYX columnar reader vs all open-source YXDB readers:
-
-| Shape | SigilYX | Best C++ | Go | .NET | vs best |
-|-------|--------:|---------:|---:|-----:|--------:|
-| Narrow (2 cols) | **2.2 ms** | 2.2 ms | 4.5 ms | 8.7 ms | **1.0×** |
-| Numeric (5 cols) | **4.2 ms** | 4.3 ms | 7.2 ms | 11.6 ms | **1.0×** |
-| Mixed (8 cols) | **21.5 ms** | 39.9 ms | 130.3 ms | 108.4 ms | **1.9×** |
-| String-heavy (5 cols) | **52.0 ms** | 85.3 ms | 344.6 ms | 204.6 ms | **1.6×** |
-| Wide (50 cols) | **71.0 ms** | 139.6 ms | 439.0 ms | 336.6 ms | **2.0×** |
-
-Python (SigilYX) vs pure-Python yxdb-py:
-
-| Shape | SigilYX | yxdb-py | Speedup |
-|-------|--------:|--------:|--------:|
-| Narrow | 2.8 ms | 309 ms | **111×** |
-| Mixed | 22.2 ms | 4,333 ms | **195×** |
-| String-heavy | 52.2 ms | 10,659 ms | **204×** |
-
-See [PERFORMANCE.md](PERFORMANCE.md) for full results and methodology.
-
-## Project Structure
+## Project layout
 
 ```
 sigilyx/
-├── sigilyx/            # Rust core library (published to crates.io)
-├── sigilyx-python/     # PyO3 + pyo3-polars bindings
-├── python/sigilyx/     # Python wrapper (__init__.py — Polars/PyArrow/Pandas API)
-├── benchmarks/         # Cross-language benchmark suite (Rust, Go, C#, C++)
-├── tests/              # Python test suite
-├── PERFORMANCE.md      # Benchmark results
-└── SPECIFICATION.md    # YXDB format specification
+  sigilyx/            # Rust core library (published to crates.io)
+  sigilyx-python/     # PyO3 + pyo3-polars bindings
+  python/sigilyx/     # Python wrapper (__init__.py - Polars/PyArrow/Pandas API)
+  tests/              # Python test suite
+  docs/               # Docusaurus site (sigilweaver.app/sigilyx/)
+  SPECIFICATION-E1.md # YXDB E1 format spec
+  SPECIFICATION-E2.md # YXDB E2 format spec (experimental)
 ```
 
 <details>
 <summary><strong>Building from source</strong></summary>
 
-Requires [Rust](https://rustup.rs/) and Python 3.9+.
+Requires [Rust](https://rustup.rs/) (>= 1.75) and Python 3.9+.
 
 ```bash
-git clone https://github.com/Sigilweaver/sigilyx.git
-cd sigilyx
+git clone https://github.com/Sigilweaver/SigilYX.git
+cd SigilYX
 python -m venv .venv
-.venv\Scripts\activate      # Windows
-# source .venv/bin/activate  # macOS / Linux
+.venv\Scripts\activate         # Windows
+# source .venv/bin/activate    # macOS / Linux
 pip install maturin polars pyarrow pandas
 maturin develop --release
 ```
@@ -121,12 +101,10 @@ cargo test --workspace
 pytest tests/ -v
 ```
 
-See [benchmarks/README.md](benchmarks/README.md) for the full cross-language benchmark setup.
-
 </details>
 
 ## License
 
-[GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only).
+[Apache License 2.0](LICENSE).
 
-Format specification derived from open-source implementations; implementation is original. See [SPECIFICATION.md](SPECIFICATION.md) for references.
+The format specification was reconstructed from the published Alteryx engine SDK headers and from existing open-source implementations; the implementation itself is original. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for attribution of vendored components.

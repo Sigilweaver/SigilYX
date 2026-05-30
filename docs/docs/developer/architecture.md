@@ -4,14 +4,13 @@ sidebar_position: 1
 
 # Architecture
 
-SigilYX is structured as a Rust workspace with three crates and a Python wrapper:
+SigilYX is structured as a Rust workspace with two crates and a Python wrapper:
 
 ```
 sigilyx/              Workspace root
   sigilyx/            Core Rust library (reader, writer, field types)
   sigilyx-python/     PyO3 + pyo3-polars bindings
   python/sigilyx/     Python wrapper module (API, Polars plugin registration)
-  benchmarks/rust/    Benchmark harness
 ```
 
 ## Read Pipeline

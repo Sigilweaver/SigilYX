@@ -5,6 +5,29 @@ All notable changes to SigilYX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.2.0] - 2026-05-30
+
+### Changed
+
+- **License:** Relicensed from AGPL-3.0-only to Apache-2.0.
+- **Positioning:** Removed performance-oriented marketing copy from the README
+  and Python README. SigilYX is now described as a plain Rust + Python
+  reader/writer for the YXDB format, in line with the rest of the
+  Sigilweaver open-source portfolio.
+
+### Added
+
+- `SECURITY.md` with private vulnerability reporting policy.
+- `CITATION.cff` for academic and software citation.
+
+### Removed
+
+- `PERFORMANCE.md` and the `benchmarks/` tree (Rust, Go, C#, C++ harnesses
+  and supporting data-generation scripts). The benchmark workspace member
+  is also removed from the root `Cargo.toml`.
+
 ## [0.1.3] - 2026-03-07
 
 ### Fixed

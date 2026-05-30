@@ -77,7 +77,6 @@ sigilyx/                    # Workspace root
     src/lib.rs
   python/sigilyx/            # Python wrapper module
     __init__.py              # API surface, Polars plugin registration
-  benchmarks/                # Cross-language benchmark suite
   tests/                     # Python test suite
 ```
 
