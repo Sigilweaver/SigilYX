@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-30
+
+### Fixed
+
+- Re-published as `0.2.1` because the `sigilyx-0.2.0-*` wheel
+  filenames were reserved by an earlier deleted PyPI upload and
+  could not be re-used. No code changes versus `0.2.0`.
+
 ## [0.2.0] - 2026-05-30
 
 ### Changed
