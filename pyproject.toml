@@ -39,9 +39,9 @@ Issues = "https://github.com/Sigilweaver/SigilYX/issues"
 Changelog = "https://github.com/Sigilweaver/SigilYX/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-arrow = ["pyarrow>=14.0"]
-pandas = ["pandas>=1.5", "pyarrow>=14.0"]
-all = ["pyarrow>=14.0", "pandas>=1.5"]
+arrow = ["pyarrow>=21.0.0"]
+pandas = ["pandas>=1.5", "pyarrow>=21.0.0"]
+all = ["pyarrow>=21.0.0", "pandas>=1.5"]
 
 [tool.maturin]
 manifest-path = "sigilyx-python/Cargo.toml"
@@ -53,4 +53,4 @@ include = ["LICENSE", "python/README.md"]
 testpaths = ["tests"]
 
 [dependency-groups]
-dev = ["pyarrow>=14.0", "psutil>=5.9"]
+dev = ["pyarrow>=21.0.0", "psutil>=5.9"]
