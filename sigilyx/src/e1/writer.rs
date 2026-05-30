@@ -596,10 +596,8 @@ fn build_meta_xml(fields: &[FieldMeta]) -> String {
             FieldType::String | FieldType::WString | FieldType::VString | FieldType::VWString => {
                 let _ = write!(xml, " size=\"{}\"", field.size);
             }
-            FieldType::Blob | FieldType::SpatialObj => {
-                if field.size > 0 {
-                    let _ = write!(xml, " size=\"{}\"", field.size);
-                }
+            FieldType::Blob | FieldType::SpatialObj if field.size > 0 => {
+                let _ = write!(xml, " size=\"{}\"", field.size);
             }
             // Fixed-size types: Bool, Byte, Int16, Int32, Int64, Float,
             // Double, Date, Time, DateTime — Alteryx omits size for these.

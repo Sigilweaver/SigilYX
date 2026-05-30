@@ -260,10 +260,11 @@ impl YxdbReader {
                 // that all records parse correctly.  If not, the block stream
                 // contains interleaved spatial grid blocks that must be
                 // filtered out and the data re-decompressed.
-                if self.header.has_spatial_index() && has_var {
-                    if !records_fit(&data, fixed_size, num_records) {
-                        data = decompress_blocks(raw_data, algo, Some(fixed_size))?;
-                    }
+                if self.header.has_spatial_index()
+                    && has_var
+                    && !records_fit(&data, fixed_size, num_records)
+                {
+                    data = decompress_blocks(raw_data, algo, Some(fixed_size))?;
                 }
 
                 Cow::Owned(data)

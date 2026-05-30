@@ -169,7 +169,7 @@ impl E2Reader {
         let height = if n_fields > 0 { columns[0].len() } else { 0 };
         let cols: Vec<Column> = fields
             .iter()
-            .zip(columns.into_iter())
+            .zip(columns)
             .map(|(field, vals)| {
                 field_values_to_series(&field.name, field.field_type, vals).map(|s| s.into_column())
             })
