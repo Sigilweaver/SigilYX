@@ -68,7 +68,7 @@ jobs:
 
   python-test:
     name: Python test
-    runs-on: warp-ubuntu-latest-x64-4x
+    runs-on: ubuntu-latest
     needs: lint
     steps:
       - uses: actions/checkout@v6
