@@ -3,6 +3,7 @@
 *YXDB reader and writer for Rust, with Python bindings.*
 
 [![CI](https://github.com/Sigilweaver/SigilYX/actions/workflows/ci.yml/badge.svg)](https://github.com/Sigilweaver/SigilYX/actions/workflows/ci.yml)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20470609.svg)](https://doi.org/10.5281/zenodo.20470609)
 [![crates.io](https://img.shields.io/crates/v/sigilyx.svg)](https://crates.io/crates/sigilyx)
 [![PyPI](https://img.shields.io/pypi/v/sigilyx.svg)](https://pypi.org/project/sigilyx/)
 [![docs.rs](https://img.shields.io/docsrs/sigilyx)](https://docs.rs/sigilyx)
