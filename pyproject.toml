@@ -10,7 +10,7 @@ readme = "python/README.md"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Sigilweaver" }]
 requires-python = ">=3.9"
-dependencies = ["polars>=0.20"]
+dependencies = ["polars>=1.36.1"]
 keywords = ["yxdb", "alteryx", "polars", "dataframe", "etl", "arrow"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -39,9 +39,9 @@ Issues = "https://github.com/Sigilweaver/SigilYX/issues"
 Changelog = "https://github.com/Sigilweaver/SigilYX/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-arrow = ["pyarrow>=14.0"]
-pandas = ["pandas>=1.5", "pyarrow>=14.0"]
-all = ["pyarrow>=14.0", "pandas>=1.5"]
+arrow = ["pyarrow>=21.0"]
+pandas = ["pandas>=1.5", "pyarrow>=21.0"]
+all = ["pyarrow>=21.0", "pandas>=1.5"]
 
 [tool.maturin]
 manifest-path = "sigilyx-python/Cargo.toml"
@@ -53,4 +53,4 @@ include = ["LICENSE", "python/README.md"]
 testpaths = ["tests"]
 
 [dependency-groups]
-dev = ["pyarrow>=14.0", "psutil>=5.9"]
+dev = ["pyarrow>=21.0", "psutil>=7.2.2"]
