@@ -1,6 +1,6 @@
 [package]
 name = "sigilyx-python"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 description = "Python bindings for SigilYX -- YXDB reader and writer."
 license = "Apache-2.0"
@@ -13,6 +13,6 @@ name = "sigilyx"
 crate-type = ["cdylib"]
 
 [dependencies]
-sigilyx-core = { path = "../sigilyx", package = "sigilyx", version = "0.2.1" }
+sigilyx-core = { path = "../sigilyx", package = "sigilyx", version = "0.3.0" }
 pyo3 = { version = "0.27", features = ["extension-module", "abi3-py39", "generate-import-lib"] }
 pyo3-polars = "0.26"

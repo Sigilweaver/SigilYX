@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-31
+
+### Added
+
+- `CITATION.cff`: author identity (Nathan Riley + ORCID) and a
+  scaffolded `identifiers:` block ready for the Zenodo concept DOI.
+
+### Changed
+
+- CI: `python-test` job moved off the warpbuild self-hosted runner
+  back to the standard GitHub-hosted `ubuntu-latest` pool.
+- Dependency bumps applied directly to `main` (closes dependabot
+  PRs #2-#5, #7, #9, #11-#14, #16-#17): `actions/checkout` v6,
+  `actions/download-artifact` v8, plus cargo / pip dependency
+  refresh including `rustls-webpki 0.103.13` (RUSTSEC-2026-0049,
+  -0098, -0099, -0104).
+- Test suite: tests requiring missing `.yxdb` fixtures are now
+  marked `#[ignore]` so CI is not blocked.
+- `cargo clippy --fix` cleanups (collapsible if/match, useless
+  conversions); `cargo fmt` normalisation.
+
 ## [0.2.1] - 2026-05-30
 
 ### Fixed
