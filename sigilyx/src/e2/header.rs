@@ -83,12 +83,12 @@ pub fn parse_meta_xml(xml: &str) -> Result<Vec<FieldMeta>> {
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
                         b"name" => {
-                            name =
-                                attr.unescape_value()
-                                    .map(|v| v.to_string())
-                                    .unwrap_or_else(|_| {
-                                        String::from_utf8_lossy(&attr.value).to_string()
-                                    });
+                            name = attr
+                                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                                .map(|v| v.into_owned())
+                                .unwrap_or_else(|_| {
+                                    String::from_utf8_lossy(&attr.value).to_string()
+                                });
                         }
                         b"type" => {
                             type_str = String::from_utf8_lossy(&attr.value).to_string();

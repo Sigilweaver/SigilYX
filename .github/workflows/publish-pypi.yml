@@ -36,7 +36,7 @@ jobs:
           - os: windows-latest
             target: x64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Sync version from tag
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
@@ -53,7 +53,7 @@ jobs:
           perl -i -pe "s/path = \"\\.\\.\\/sigilyx\", package = \"sigilyx\", version = \"[^\"]*\"/path = \"..\\/sigilyx\", package = \"sigilyx\", version = \"$VERSION\"/" \
             sigilyx-python/Cargo.toml
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -66,7 +66,7 @@ jobs:
           manylinux: ${{ matrix.manylinux }}
           sccache: "true"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.target }}
           path: dist/*.whl
