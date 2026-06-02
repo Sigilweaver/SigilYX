@@ -17,12 +17,13 @@ const config: Config = {
       onBrokenMarkdownLinks: 'throw',
     },
   },
+  plugins: ['docusaurus-plugin-llms-txt'],
   themes: ['@docusaurus/theme-mermaid'],
 
   // Set the production url of your site here
   url: 'https://sigilweaver.app',
-  // Serve in /sigilyx subfolder
-  baseUrl: '/sigilyx/',
+  // Serve in /sigilyx/docs subfolder
+  baseUrl: '/sigilyx/docs/',
 
   organizationName: 'sigilweaver',
   projectName: 'sigilyx',
