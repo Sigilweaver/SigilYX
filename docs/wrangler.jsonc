@@ -6,11 +6,11 @@
     },
     "routes": [
         {
-            "pattern": "sigilweaver.app/sigilyx",
+            "pattern": "sigilweaver.app/sigilyx/docs",
             "zone_name": "sigilweaver.app"
         },
         {
-            "pattern": "sigilweaver.app/sigilyx/*",
+            "pattern": "sigilweaver.app/sigilyx/docs/*",
             "zone_name": "sigilweaver.app"
         }
     ]
