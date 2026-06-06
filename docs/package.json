@@ -7,7 +7,7 @@
         "start": "docusaurus start --port 25814",
         "dev": "docusaurus start --port 25814",
         "build": "docusaurus build",
-        "build:cloudflare": "docusaurus build --out-dir build/sigilyx",
+        "build:cloudflare": "docusaurus build --out-dir build/sigilyx/docs",
         "swizzle": "docusaurus swizzle",
         "deploy": "docusaurus deploy",
         "clear": "docusaurus clear",
