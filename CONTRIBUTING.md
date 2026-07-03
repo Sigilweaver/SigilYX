@@ -1,6 +1,6 @@
 # Contributing to SigilYX
 
-We welcome contributions! This page covers the essentials — see the full [Contributing Guide](https://sigilweaver.app/sigilyx/developer/contributing) on the docs site for details.
+We welcome contributions! This page covers the essentials - see the full [Contributing Guide](https://sigilweaver.app/sigilyx/developer/contributing) on the docs site for details.
 
 ## Quick Start
 

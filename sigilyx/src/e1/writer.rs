@@ -20,7 +20,7 @@ const BLOCK_SIZE: usize = 0x40000; // 262144
 /// The reader uses this to build a seek index for random access.
 const RECORDS_PER_BLOCK: usize = 0x10000; // 65536
 
-// ── Public API ─────────────────────────────────────────────────────────
+// -- Public API --
 
 /// Write a Polars [`DataFrame`] to a YXDB file.
 ///
@@ -77,7 +77,7 @@ pub fn write_yxdb_from_ipc_spatial<P: AsRef<Path>>(
     write_yxdb(path, &df, spatial_columns)
 }
 
-// ── Streaming Writer ───────────────────────────────────────────────────
+// -- Streaming Writer --
 
 /// A streaming YXDB writer that supports writing data in batches.
 ///
@@ -293,7 +293,7 @@ impl<W: Write + Seek> YxdbWriter<W> {
     /// This **must** be called to produce a valid YXDB file. Dropping the
     /// writer without calling `finish()` will emit a warning and leave the
     /// file with an incorrect record count in the header.
-    #[must_use = "call .finish() to write a valid YXDB — dropping the writer without finishing produces a corrupt file"]
+    #[must_use = "call .finish() to write a valid YXDB - dropping the writer without finishing produces a corrupt file"]
     pub fn finish(mut self) -> Result<()> {
         self.finished = true;
 
@@ -334,7 +334,7 @@ impl<W: Write + Seek> Drop for YxdbWriter<W> {
             return;
         }
         eprintln!(
-            "warning: YxdbWriter dropped without calling finish() — \
+            "warning: YxdbWriter dropped without calling finish() - \
              the output file is incomplete and will be removed"
         );
         // Best-effort removal of the incomplete file.
@@ -348,7 +348,7 @@ impl<W: Write + Seek> Drop for YxdbWriter<W> {
     }
 }
 
-// ── Schema inference ───────────────────────────────────────────────────
+// -- Schema inference --
 
 /// Infer a YXDB field schema from a Polars DataFrame.
 pub fn infer_schema(df: &DataFrame, spatial_columns: &[&str]) -> Result<Vec<FieldMeta>> {
@@ -362,7 +362,7 @@ pub fn infer_schema(df: &DataFrame, spatial_columns: &[&str]) -> Result<Vec<Fiel
         let (field_type, size, scale) = match dtype {
             DataType::Boolean => (FieldType::Bool, 1, 0),
             DataType::UInt8 => (FieldType::Byte, 1, 0),
-            DataType::Int8 => (FieldType::Int16, 2, 0), // Int8 has sign — Byte is unsigned
+            DataType::Int8 => (FieldType::Int16, 2, 0), // Int8 has sign - Byte is unsigned
             DataType::Int16 => (FieldType::Int16, 2, 0),
             DataType::UInt16 => (FieldType::Int32, 4, 0), // UInt16 max 65535 overflows Int16
             DataType::Int32 => (FieldType::Int32, 4, 0),
@@ -467,7 +467,7 @@ fn column_max_string_size(col: &Column, wide: bool) -> usize {
     max_len.max(1)
 }
 
-// ── Core writer ────────────────────────────────────────────────────────
+// -- Core writer --
 
 pub(crate) fn write_yxdb_impl(path: &Path, df: &DataFrame, fields: &[FieldMeta]) -> Result<()> {
     let num_records = df.height() as u64;
@@ -530,7 +530,7 @@ pub(crate) fn write_yxdb_impl(path: &Path, df: &DataFrame, fields: &[FieldMeta])
     Ok(())
 }
 
-// ── Header construction ────────────────────────────────────────────────
+// -- Header construction --
 
 // The YXDB format uses "Alteryx Database File" as a magic identifier (like PNG or PDF magic bytes).
 // This is the minimum required for format identification and interoperability.
@@ -571,7 +571,7 @@ fn build_header(
     header
 }
 
-// ── XML metadata ───────────────────────────────────────────────────────
+// -- XML metadata --
 
 fn build_meta_xml(fields: &[FieldMeta]) -> String {
     use std::fmt::Write;
@@ -600,7 +600,7 @@ fn build_meta_xml(fields: &[FieldMeta]) -> String {
                 let _ = write!(xml, " size=\"{}\"", field.size);
             }
             // Fixed-size types: Bool, Byte, Int16, Int32, Int64, Float,
-            // Double, Date, Time, DateTime — Alteryx omits size for these.
+            // Double, Date, Time, DateTime - Alteryx omits size for these.
             _ => {}
         }
 
@@ -626,7 +626,7 @@ fn xml_escape_into(s: &str, out: &mut String) {
     }
 }
 
-// ── UTF-16LE encoding ──────────────────────────────────────────────────
+// -- UTF-16LE encoding --
 
 fn encode_utf16_le(s: &str) -> Vec<u8> {
     let code_units: Vec<u16> = s.encode_utf16().collect();
@@ -639,7 +639,7 @@ fn encode_utf16_le(s: &str) -> Vec<u8> {
     bytes
 }
 
-// ── Record serialization ───────────────────────────────────────────────
+// -- Record serialization --
 
 /// A compressed block ready to be written to disk.
 struct CompressedBlock {
@@ -683,7 +683,7 @@ fn write_records<W: Write>(
 ) -> Result<(Vec<i64>, u64)> {
     let columns: Vec<&Column> = df.columns().iter().collect();
 
-    // ── Pipelined compression ──────────────────────────────────────
+    // -- Pipelined compression --
     // Main thread: serialize records into block buffers
     // Background thread: compress blocks while main thread builds the next one
     //
@@ -800,7 +800,7 @@ fn write_records<W: Write>(
         }
 
         // Append record data, splitting across block boundaries if needed.
-        // Alteryx writes records contiguously across blocks — a record may
+        // Alteryx writes records contiguously across blocks - a record may
         // start in one block and finish in the next. We replicate this
         // behaviour so that large records (e.g. big blobs) get compressed
         // in standard-sized blocks rather than stored uncompressed.
@@ -1010,7 +1010,7 @@ fn serialize_field_into(
                     }
                 }
                 DataType::Duration(tu) => {
-                    // Duration stored as physical i64 — normalize to microseconds
+                    // Duration stored as physical i64 - normalize to microseconds
                     let phys = col.to_physical_repr();
                     let v = phys
                         .i64()
@@ -1291,7 +1291,7 @@ fn serialize_field_into(
     Ok(())
 }
 
-// ── Field serialization ────────────────────────────────────────────────
+// -- Field serialization --
 
 /// Append variable-length data as a var block to var_data.
 ///
@@ -1313,7 +1313,7 @@ fn append_var_block_header(var_data: &mut Vec<u8>, byte_len: usize) {
     }
 }
 
-// ── Helper functions ───────────────────────────────────────────────────
+// -- Helper functions --
 
 /// Format an i128 unscaled decimal value as an ASCII decimal string.
 /// E.g., `format_decimal_i128(12345678, 4)` → `"1234.5678"`.
@@ -1748,7 +1748,7 @@ mod tests {
         assert_eq!(file_id, 0x00440204, "FileID in written file");
     }
 
-    // ── Edge-case / stress tests ─────────────────────────────────────
+    // -- Edge-case / stress tests --
 
     #[test]
     fn test_roundtrip_empty_dataframe() {
@@ -2174,7 +2174,7 @@ mod tests {
         assert_eq!(ns_to_time_str(noon_ns), "12:00:00");
     }
 
-    // ── Additional edge-case / stress tests ──────────────────────────
+    // -- Additional edge-case / stress tests --
 
     #[test]
     fn test_roundtrip_time_column() {
@@ -2546,7 +2546,7 @@ mod tests {
         assert_eq!(vals, vec![1, 2, 3]);
     }
 
-    // ── New feature tests: spatial roundtrip, GeoArrow, header file_id ──
+    // -- New feature tests: spatial roundtrip, GeoArrow, header file_id --
 
     #[test]
     fn test_written_file_has_no_spatial_index_file_id() {
@@ -2617,7 +2617,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write_yxdb(tmp.path(), &df, &["geom"]).unwrap();
 
-        // Read back in Wkb mode — should get WKB bytes back
+        // Read back in Wkb mode - should get WKB bytes back
         let df2 = read_yxdb(tmp.path(), SpatialMode::Wkb, false).unwrap();
         assert_eq!(df2.height(), 2);
         assert_eq!(df2.width(), 2);
@@ -3056,11 +3056,11 @@ mod tests {
         assert_ne!(ipc_raw, ipc_wkb);
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    // Regression tests — audit findings (v0.1.1)
-    // ══════════════════════════════════════════════════════════════════
+    // ---
+    // Regression tests - audit findings (v0.1.1)
+    // ---
 
-    /// Audit #1 — Int8 sign bit must survive a roundtrip.
+    /// Audit #1 - Int8 sign bit must survive a roundtrip.
     /// Previously Int8 mapped to YXDB Byte (unsigned 0-255) causing
     /// negative values to corrupt.  Now maps to Int16.
     #[test]
@@ -3087,7 +3087,7 @@ mod tests {
         assert_eq!(col.get(4), Some(127));
     }
 
-    /// Audit #1 (companion) — Int8 maps to Int16 (signed), NOT Byte (unsigned).
+    /// Audit #1 (companion) - Int8 maps to Int16 (signed), NOT Byte (unsigned).
     /// This verifies the schema inference at the type level.
     #[test]
     fn regression_int8_maps_to_int16_not_byte() {
@@ -3101,7 +3101,7 @@ mod tests {
         assert_eq!(fields[0].size, 2);
     }
 
-    /// Audit #2 — UInt64 values exceeding i64::MAX must error, not wrap.
+    /// Audit #2 - UInt64 values exceeding i64::MAX must error, not wrap.
     #[test]
     fn regression_uint64_overflow_rejected() {
         use polars::prelude::*;
@@ -3121,7 +3121,7 @@ mod tests {
         );
     }
 
-    /// Audit #2 (companion) — UInt64 values within i64 range succeed.
+    /// Audit #2 (companion) - UInt64 values within i64 range succeed.
     #[test]
     fn regression_uint64_within_range_ok() {
         use crate::{read_yxdb, SpatialMode};
@@ -3144,7 +3144,7 @@ mod tests {
         assert_eq!(col.get(2), Some(i64::MAX));
     }
 
-    /// Audit #5 — Large binary blob (> BLOCK_SIZE) roundtrips correctly.
+    /// Audit #5 - Large binary blob (> BLOCK_SIZE) roundtrips correctly.
     /// Previously oversized records caused LZF buffer overflows.
     #[test]
     fn regression_large_blob_roundtrip() {
@@ -3166,7 +3166,7 @@ mod tests {
         assert_eq!(read_blob, big_blob.as_slice());
     }
 
-    /// Audit #7 — Empty DataFrame (0 rows) roundtrips preserving schema.
+    /// Audit #7 - Empty DataFrame (0 rows) roundtrips preserving schema.
     #[test]
     fn regression_empty_dataframe_roundtrip() {
         use crate::{read_yxdb, SpatialMode};
@@ -3192,7 +3192,7 @@ mod tests {
         assert_eq!(df2.get_column_names()[1].as_str(), "name");
     }
 
-    /// Audit #12 — Duration columns roundtrip as Int64 microseconds.
+    /// Audit #12 - Duration columns roundtrip as Int64 microseconds.
     #[test]
     fn regression_duration_roundtrip() {
         use crate::{read_yxdb, SpatialMode};
@@ -3217,7 +3217,7 @@ mod tests {
         assert_eq!(col.get(3), Some(0));
     }
 
-    /// Audit #12 (companion) — Duration nanoseconds are normalized to microseconds.
+    /// Audit #12 (companion) - Duration nanoseconds are normalized to microseconds.
     #[test]
     fn regression_duration_nanoseconds_normalized() {
         use crate::{read_yxdb, SpatialMode};
@@ -3239,7 +3239,7 @@ mod tests {
         assert_eq!(col.get(0), Some(5_000)); // normalized from ns → µs
     }
 
-    /// Audit #12 (companion) — Duration milliseconds are normalized to microseconds.
+    /// Audit #12 (companion) - Duration milliseconds are normalized to microseconds.
     #[test]
     fn regression_duration_milliseconds_normalized() {
         use crate::{read_yxdb, SpatialMode};
@@ -3261,7 +3261,7 @@ mod tests {
         assert_eq!(col.get(0), Some(3_000)); // normalized from ms → µs
     }
 
-    /// Audit #18 — Drop no longer prints to stderr.
+    /// Audit #18 - Drop no longer prints to stderr.
     /// (Structural test: a writer that goes out of scope without finish()
     /// should not panic and should not produce output on stderr.)
     #[test]
@@ -3275,7 +3275,7 @@ mod tests {
         {
             let mut writer = YxdbWriter::new(tmp.path(), &df).unwrap();
             writer.write_batch(&df).unwrap();
-            // Drop without calling finish() — should not panic
+            // Drop without calling finish() - should not panic
         }
         // If we reach here, the drop didn't panic
     }

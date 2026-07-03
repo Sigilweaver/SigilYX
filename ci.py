@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Local CI — run the same checks as GitHub Actions without spending money.
+Local CI - run the same checks as GitHub Actions without spending money.
 
 Usage:
     python ci.py              # run everything (lint + test-rust + test-python)
@@ -20,7 +20,7 @@ import subprocess
 import sys
 import time
 
-# ── Helpers ─────────────────────────────────────────────────────────────
+# -- Helpers --
 
 DIVIDER = "=" * 60
 
@@ -44,7 +44,7 @@ def heading(text: str) -> None:
     print(f"\n{DIVIDER}\n  {text}\n{DIVIDER}")
 
 
-# ── Detect environment ─────────────────────────────────────────────────
+# -- Detect environment --
 
 def cargo_extra_args() -> list[str]:
     """Flags shared across cargo invocations."""
@@ -66,7 +66,7 @@ def _python() -> str:
     return "python"
 
 
-# ── CI steps ────────────────────────────────────────────────────────────
+# -- CI steps --
 
 def step_lint(*, fix: bool = False) -> list[str]:
     """Check formatting and run clippy.  Returns list of failure names."""
@@ -151,7 +151,7 @@ def step_test_python() -> list[str]:
     return failures
 
 
-# ── Main ────────────────────────────────────────────────────────────────
+# -- Main --
 
 STEPS = {
     "lint":        step_lint,
@@ -161,7 +161,7 @@ STEPS = {
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Local CI — mirrors the GitHub Actions workflow.",
+        description="Local CI - mirrors the GitHub Actions workflow.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

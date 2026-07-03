@@ -31,15 +31,15 @@ const NULL_DATE: u8 = 0x4D;
 const NULL_DATETIME: u8 = 0x4E;
 const NULL_TIME: u8 = 0x4F;
 
-// ── UNVERIFIED null bytes ────────────────────────────────────────────
+// -- UNVERIFIED null bytes --
 // The following null bytes are predicted from the 0x40+type_code pattern
 // but have NEVER been observed in any corpus file. They may be wrong.
-const NULL_FIXED_DECIMAL: u8 = 0x4C; // UNVERIFIED — type code 12, conflicts with NULL_DOUBLE_ALT
-const NULL_STRING: u8 = 0x41; // UNVERIFIED — assumed same as V_String
-const NULL_WSTRING: u8 = 0x41; // UNVERIFIED — assumed same as V_WString
-const NULL_BLOB: u8 = 0x41; // Confirmed — same as V_String/V_WString
+const NULL_FIXED_DECIMAL: u8 = 0x4C; // UNVERIFIED - type code 12, conflicts with NULL_DOUBLE_ALT
+const NULL_STRING: u8 = 0x41; // UNVERIFIED - assumed same as V_String
+const NULL_WSTRING: u8 = 0x41; // UNVERIFIED - assumed same as V_WString
+const NULL_BLOB: u8 = 0x41; // Confirmed - same as V_String/V_WString
 #[allow(dead_code)] // Documented for reference; SpatialObj has its own decoder
-const NULL_SPATIAL: u8 = 0x43; // Predicted — type code 3 → 0x40+3=0x43
+const NULL_SPATIAL: u8 = 0x43; // Predicted - type code 3 → 0x40+3=0x43
 
 /// Returns `true` if the given field type has been verified against real E2
 /// corpus data. Types that return `false` have speculative decoders that may
@@ -120,29 +120,29 @@ pub fn decode_field(
         FieldType::DateTime => decode_datetime(data, pos),
         FieldType::Time => decode_time(data, pos),
 
-        // ── UNVERIFIED TYPES ────────────────────────────────────────
+        // -- UNVERIFIED TYPES --
         // The decoders below are speculative. They have NEVER been
         // validated against real E2 corpus files. The encoding is our
         // best guess based on E1 patterns and the compact encoding
         // scheme, but may be completely wrong.
-        // ─────────────────────────────────────────────────────────────
+        // ---
 
-        // UNVERIFIED: FixedDecimal — guessing it uses the same
+        // UNVERIFIED: FixedDecimal - guessing it uses the same
         // length-prefixed UTF-8 encoding as V_String, carrying the
         // ASCII decimal representation (like E1). Null byte 0x4C.
         FieldType::FixedDecimal => decode_fixed_decimal(data, pos),
 
-        // UNVERIFIED: Fixed-width String/WString — E2 may not even
+        // UNVERIFIED: Fixed-width String/WString - E2 may not even
         // support these types. Guessing they use the same variable-
         // length UTF-8 encoding as V_String since E2 is all-UTF-8.
         FieldType::String => decode_string(data, pos, NULL_STRING),
         FieldType::WString => decode_string(data, pos, NULL_WSTRING),
 
-        // Blob — inline data via 0x80|len or 0x02+u16 length prefixes,
+        // Blob - inline data via 0x80|len or 0x02+u16 length prefixes,
         // and 0x12 blob references for large values. Returns raw bytes.
         FieldType::Blob => decode_blob(data, pos),
 
-        // SpatialObj — inline data via 0x80|len or 0x03+u16 length
+        // SpatialObj - inline data via 0x80|len or 0x03+u16 length
         // prefixes, and 0x13 blob references for large values.
         // Binary format is ESRI Shapefile geometry records.
         FieldType::SpatialObj => decode_spatial(data, pos),
@@ -187,7 +187,7 @@ enum IntTarget {
     Int64,
 }
 
-// ── Bool ────────────────────────────────────────────────────────────
+// -- Bool --
 
 fn decode_bool(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeError> {
     let b = data[pos];
@@ -199,7 +199,7 @@ fn decode_bool(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeErr
     }
 }
 
-// ── Compact Integer ─────────────────────────────────────────────────
+// -- Compact Integer --
 
 fn decode_compact_int(
     data: &[u8],
@@ -279,7 +279,7 @@ fn int_zero(target: &IntTarget) -> FieldValue {
     }
 }
 
-// ── Float ───────────────────────────────────────────────────────────
+// -- Float --
 
 fn decode_float(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeError> {
     let prefix = data[pos];
@@ -312,7 +312,7 @@ fn decode_float(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeEr
     Ok((FieldValue::Float(Some(v)), end))
 }
 
-// ── Double ──────────────────────────────────────────────────────────
+// -- Double --
 
 fn decode_double(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeError> {
     let prefix = data[pos];
@@ -327,7 +327,7 @@ fn decode_double(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeE
         return Ok((FieldValue::Double(None), pos + 1));
     }
 
-    // Zero prefix (0x06) — special case: value is 0.0, no data bytes
+    // Zero prefix (0x06) - special case: value is 0.0, no data bytes
     if prefix == 0x06 {
         return Ok((FieldValue::Double(Some(0.0)), pos + 1));
     }
@@ -346,7 +346,7 @@ fn decode_double(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeE
     Ok((FieldValue::Double(Some(v)), end))
 }
 
-// ── String (V_String / V_WString) ───────────────────────────────────
+// -- String (V_String / V_WString) --
 
 fn decode_string(
     data: &[u8],
@@ -410,7 +410,7 @@ fn decode_string(
     Err(DecodeError::InvalidPrefix(prefix, FieldType::VString))
 }
 
-// ── FixedDecimal (UNVERIFIED) ────────────────────────────────────────
+// -- FixedDecimal (UNVERIFIED) --
 //
 // WARNING: This decoder has NEVER been validated against real E2 data.
 // We guess FixedDecimal uses the same length-prefixed UTF-8 encoding as
@@ -428,7 +428,7 @@ fn decode_fixed_decimal(data: &[u8], pos: usize) -> Result<(FieldValue, usize), 
         return Ok((FieldValue::Decimal(None), pos + 1));
     }
 
-    // Null: below-base (UNVERIFIED — assuming same 0x00 as V_String)
+    // Null: below-base (UNVERIFIED - assuming same 0x00 as V_String)
     if prefix == 0x00 {
         return Ok((FieldValue::Decimal(None), pos + 1));
     }
@@ -461,7 +461,7 @@ fn decode_fixed_decimal(data: &[u8], pos: usize) -> Result<(FieldValue, usize), 
     Err(DecodeError::InvalidPrefix(prefix, FieldType::FixedDecimal))
 }
 
-// ── Blob ─────────────────────────────────────────────────────────────
+// -- Blob --
 //
 // Blob fields use type-class 2: inline via 0x80|len or 0x02+u16,
 // blob references via 0x12+u64 (absolute file offset to type 0x01 block).
@@ -511,7 +511,7 @@ fn decode_blob(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeErr
         return Ok((FieldValue::Blob(Some(data[pos + 3..end].to_vec())), end));
     }
 
-    // Blob reference (type class 1 — V_String style): prefix = 0x11 + 8 bytes
+    // Blob reference (type class 1 - V_String style): prefix = 0x11 + 8 bytes
     // u32 offset + u32 length into concatenated blob_data
     if prefix == 0x11 {
         let end = pos + 1 + 8;
@@ -523,7 +523,7 @@ fn decode_blob(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeErr
         return Ok((FieldValue::BlobRef(blob_offset, blob_len), end));
     }
 
-    // Blob reference (type class 2 — file offset): prefix = 0x12 + u64 LE
+    // Blob reference (type class 2 - file offset): prefix = 0x12 + u64 LE
     // u64 absolute file offset to start of type 0x01 block
     if prefix == 0x12 {
         let end = pos + 1 + 8;
@@ -539,7 +539,7 @@ fn decode_blob(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeErr
     Err(DecodeError::InvalidPrefix(prefix, FieldType::Blob))
 }
 
-// ── SpatialObj ──────────────────────────────────────────────────────
+// -- SpatialObj --
 //
 // SpatialObj fields use type-class 3: inline via 0x80|len or 0x03+u16,
 // blob references via 0x13+u64 (absolute file offset to type 0x01 block).
@@ -576,7 +576,7 @@ fn decode_spatial(data: &[u8], pos: usize) -> Result<(FieldValue, usize), Decode
         return Ok((FieldValue::Blob(Some(data[pos + 3..end].to_vec())), end));
     }
 
-    // Blob reference (type class 3 — file offset): prefix = 0x13 + u64 LE
+    // Blob reference (type class 3 - file offset): prefix = 0x13 + u64 LE
     if prefix == 0x13 {
         let end = pos + 1 + 8;
         if end > data.len() {
@@ -589,7 +589,7 @@ fn decode_spatial(data: &[u8], pos: usize) -> Result<(FieldValue, usize), Decode
     Err(DecodeError::InvalidPrefix(prefix, FieldType::SpatialObj))
 }
 
-// ── Date ────────────────────────────────────────────────────────────
+// -- Date --
 
 fn decode_date(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeError> {
     let prefix = data[pos];
@@ -625,7 +625,7 @@ fn decode_date(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeErr
     Ok((FieldValue::Date(Some(s)), end))
 }
 
-// ── DateTime ────────────────────────────────────────────────────────
+// -- DateTime --
 
 fn decode_datetime(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeError> {
     let prefix = data[pos];
@@ -661,7 +661,7 @@ fn decode_datetime(data: &[u8], pos: usize) -> Result<(FieldValue, usize), Decod
     Ok((FieldValue::DateTime(Some(s)), end))
 }
 
-// ── Time ────────────────────────────────────────────────────────────
+// -- Time --
 
 fn decode_time(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeError> {
     let prefix = data[pos];
@@ -695,7 +695,7 @@ fn decode_time(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeErr
     Ok((FieldValue::Time(Some(s)), end))
 }
 
-// ── Date/Time Helpers ───────────────────────────────────────────────
+// -- Date/Time Helpers --
 
 /// Convert an OLE day serial number to "YYYY-MM-DD" string.
 fn day_serial_to_date_str(day_serial: i64) -> String {

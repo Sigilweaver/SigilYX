@@ -5,7 +5,7 @@ from __future__ import annotations
 import polars as pl
 
 
-# ── YXDB field type → Polars dtype mapping ──────────────────────────────
+# -- YXDB field type → Polars dtype mapping --
 
 # Maps the canonical YXDB XML type name (from FieldType::Display) to the
 # corresponding Polars data type.

@@ -66,10 +66,10 @@ def read_spatial_info(path: Union[str, Path]) -> dict:
     dict
         A dict with keys:
 
-        - ``has_spatial_index`` (bool) — whether the file has a spatial index
-        - ``spatial_index_pos`` (int) — file offset of the spatial index (0 if absent)
-        - ``file_id`` (int) — raw file ID / version from the header
-        - ``spatial_columns`` (list[str]) — names of SpatialObj columns
+        - ``has_spatial_index`` (bool) - whether the file has a spatial index
+        - ``spatial_index_pos`` (int) - file offset of the spatial index (0 if absent)
+        - ``file_id`` (int) - raw file ID / version from the header
+        - ``spatial_columns`` (list[str]) - names of SpatialObj columns
 
     Examples
     --------

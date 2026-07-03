@@ -4,7 +4,7 @@
 //! Polars DataFrame integration.
 //!
 //! Supports both the **E1** (original engine) and **E2** (AMP engine) YXDB layouts.
-//! Format detection is automatic — E1 files begin with `"Alteryx Database File"`,
+//! Format detection is automatic - E1 files begin with `"Alteryx Database File"`,
 //! E2 files begin with `"Alteryx e2 Database file"`.
 //!
 //! ## Quick Start
@@ -48,9 +48,9 @@ use std::path::Path;
 /// Detected YXDB file format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum YxdbFormat {
-    /// E1 (original engine) — 512-byte header, UTF-16LE XML, LZF compression.
+    /// E1 (original engine) - 512-byte header, UTF-16LE XML, LZF compression.
     E1,
-    /// E2 (AMP engine) — 100-byte header, UTF-8 XML, Snappy compression.
+    /// E2 (AMP engine) - 100-byte header, UTF-8 XML, Snappy compression.
     E2,
 }
 
@@ -95,9 +95,9 @@ pub fn ipc_to_dataframe(ipc_bytes: &[u8]) -> Result<DataFrame> {
 ///
 /// `spatial` controls how `SpatialObj` columns are returned:
 ///
-/// - [`SpatialMode::Wkb`] — decode SHP → ISO WKB (compatible with
+/// - [`SpatialMode::Wkb`] - decode SHP → ISO WKB (compatible with
 ///   Shapely, GeoPandas, PostGIS, GDAL).
-/// - [`SpatialMode::Raw`] — keep the raw SHP bytes for expert use.
+/// - [`SpatialMode::Raw`] - keep the raw SHP bytes for expert use.
 ///
 /// `allow_unverified_e2_types` controls whether to attempt reading E2 files
 /// that contain field types whose decoders have never been verified against
@@ -227,7 +227,7 @@ pub fn read_yxdb_to_ipc_batches<P: AsRef<Path>>(
     Ok(batches)
 }
 
-// ── Streaming Writer IPC Helpers ───────────────────────────────────────
+// -- Streaming Writer IPC Helpers --
 
 use std::fs::File;
 use std::io::BufWriter;

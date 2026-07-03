@@ -1030,7 +1030,7 @@ class TestWriteEdgeCases:
             "Ünïcödé",                 # Latin Extended
             "日本語",                   # CJK
             "العربية",                  # Arabic (RTL)
-            "ĀĂĄĆĈ",                  # Latin Extended-A (U+0100 range — the SSE2 bug range)
+            "ĀĂĄĆĈ",                  # Latin Extended-A (U+0100 range - the SSE2 bug range)
             "αβγδε",                   # Greek
             "Привет",                  # Cyrillic
             "🎉🚀💻",                   # Emoji (supplementary plane)
@@ -1384,7 +1384,7 @@ class TestRobustness:
         assert df["v"].to_list() == list(range(500))
 
     def test_alternating_null_values(self, tmp_path):
-        """Every other value is null — exercises null bitmask handling."""
+        """Every other value is null - exercises null bitmask handling."""
         n = 200
         vals = [i if i % 2 == 0 else None for i in range(n)]
         df = pl.DataFrame({"v": vals}).cast({"v": pl.Int64})

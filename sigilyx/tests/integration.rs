@@ -15,7 +15,7 @@ fn test_file(name: &str) -> PathBuf {
         .join(name)
 }
 
-// ── Read Tests ───────────────────────────────────────────────────────
+// -- Read Tests --
 
 #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
 #[test]
@@ -92,7 +92,7 @@ fn read_nonexistent_file_returns_error() {
     assert!(err.is_err());
 }
 
-// ── Column Projection Tests ──────────────────────────────────────────
+// -- Column Projection Tests --
 
 #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
 #[test]
@@ -123,7 +123,7 @@ fn read_columns_unknown_returns_error() {
     assert!(err.is_err());
 }
 
-// ── Write + Round-Trip Tests ─────────────────────────────────────────
+// -- Write + Round-Trip Tests --
 
 #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
 #[test]
@@ -191,7 +191,7 @@ fn roundtrip_large_blob() {
     assert_eq!(df.height(), df2.height());
 }
 
-// ── Streaming Writer Integration ─────────────────────────────────────
+// -- Streaming Writer Integration --
 
 #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
 #[test]
@@ -224,7 +224,7 @@ fn streaming_writer_multiple_batches() {
     assert_eq!(df.height() * 2, df2.height());
 }
 
-// ── Batched Reader Integration ───────────────────────────────────────
+// -- Batched Reader Integration --
 
 #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
 #[test]
@@ -260,7 +260,7 @@ fn batched_reader_with_projection() {
     assert_eq!(total_rows, df_full.height());
 }
 
-// ── Schema / Metadata Tests ───────────────────────────────────────────
+// -- Schema / Metadata Tests --
 
 #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
 #[test]
@@ -291,7 +291,7 @@ fn write_with_explicit_schema_roundtrip() {
     assert_eq!(df.width(), df2.width());
 }
 
-// ── IPC Interop Tests ────────────────────────────────────────────────
+// -- IPC Interop Tests --
 
 #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
 #[test]

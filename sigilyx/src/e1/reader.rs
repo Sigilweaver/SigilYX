@@ -83,7 +83,7 @@ impl YxdbReader {
         const MAX_REASONABLE_RECORD_SIZE: usize = 64 * 1024 * 1024; // 64 MiB
         if fixed_size > MAX_REASONABLE_RECORD_SIZE {
             return Err(YxdbError::InvalidFile(format!(
-                "computed fixed record size ({fixed_size} bytes) exceeds sanity limit — \
+                "computed fixed record size ({fixed_size} bytes) exceeds sanity limit - \
                  the XML metadata is likely corrupt"
             )));
         }
@@ -174,7 +174,7 @@ impl YxdbReader {
     /// This avoids the cost of parsing, transcoding, and allocating columns
     /// that are not needed. Decompression still processes all record data
     /// (columns are interleaved within records), but the column-building
-    /// phase — which dominates for string-heavy schemas — is limited to the
+    /// phase - which dominates for string-heavy schemas - is limited to the
     /// requested subset.
     ///
     /// If `columns` is `None`, all columns are returned.
@@ -182,7 +182,7 @@ impl YxdbReader {
         let num_records = self.header.num_records as usize;
         let fields = std::mem::take(&mut self.fields);
 
-        // Fast path: 0-row DataFrame — return empty columns with correct schema
+        // Fast path: 0-row DataFrame - return empty columns with correct schema
         if num_records == 0 {
             let projected_fields: Vec<&FieldMeta> = match columns {
                 Some(names) => {
@@ -250,7 +250,7 @@ impl YxdbReader {
         // Version 1+ (compression = Some): parse LZF block boundaries, decompress into owned Vec.
         let all_data: Cow<'_, [u8]> = match compression {
             None => {
-                // Version 0: no block framing — records stored directly in the stream
+                // Version 0: no block framing - records stored directly in the stream
                 Cow::Borrowed(raw_data)
             }
             Some(algo) => {
@@ -441,7 +441,7 @@ impl YxdbReader {
         Ok(Some(df))
     }
 
-    // ── LZF block reading ──────────────────────────────────────────────
+    // -- LZF block reading --
 
     /// Read exactly `size` bytes from the (possibly compressed) stream into `dest`.
     fn read_bytes(&mut self, dest: &mut [u8]) -> Result<()> {
@@ -527,7 +527,7 @@ impl YxdbReader {
     }
 }
 
-// ── Record scan helpers ───────────────────────────────────────────────
+// -- Record scan helpers --
 
 /// Check whether `num_records` variable-length records can be parsed from `data`.
 ///
@@ -569,7 +569,7 @@ fn scan_variable_record_bounds(data: &[u8], fixed_size: usize, num_records: usiz
     RecordBounds::Variable { ends }
 }
 
-// ── Spatial index block detection ─────────────────────────────────────
+// -- Spatial index block detection --
 
 /// Check whether a decompressed LZF block contains record data.
 ///
@@ -593,7 +593,7 @@ fn is_record_block(block_data: &[u8], fixed_size: usize) -> bool {
     let mut offset = 0usize;
     for _ in 0..PROBES {
         if offset + fixed_size + 4 > block_data.len() {
-            // Not enough room for another record — all previous probes passed.
+            // Not enough room for another record - all previous probes passed.
             break;
         }
         let var_len = u32::from_le_bytes(
@@ -610,7 +610,7 @@ fn is_record_block(block_data: &[u8], fixed_size: usize) -> bool {
     true
 }
 
-// ── Block decompression ───────────────────────────────────────────────
+// -- Block decompression --
 
 /// Decompress LZF block-framed data into a contiguous buffer.
 ///
@@ -626,7 +626,7 @@ fn decompress_blocks(
     algo: CompressionAlgorithm,
     spatial_record_filter: Option<usize>,
 ) -> Result<Vec<u8>> {
-    // Parse block boundaries (sequential scan — just reading 4-byte lengths)
+    // Parse block boundaries (sequential scan - just reading 4-byte lengths)
     let mut blocks: Vec<(usize, usize, bool)> = Vec::new(); // (data_offset, length, is_uncompressed)
     let mut pos = 0usize;
     while pos + 4 <= raw_data.len() {
@@ -678,7 +678,7 @@ fn decompress_blocks(
     // SAFETY: The raw pointer is only used to produce disjoint mutable slices
     // of `all_data`, one per block. No two threads access the same range.
     unsafe impl Send for SendSyncPtr {}
-    // SAFETY: Same rationale — concurrent reads/writes target disjoint sub-slices.
+    // SAFETY: Same rationale - concurrent reads/writes target disjoint sub-slices.
     unsafe impl Sync for SendSyncPtr {}
     impl SendSyncPtr {
         /// Return a mutable slice starting at `offset` with length `len`.
@@ -687,7 +687,7 @@ fn decompress_blocks(
         #[inline]
         #[allow(clippy::mut_from_ref)]
         unsafe fn slice_mut(&self, offset: usize, len: usize) -> &mut [u8] {
-            // SAFETY: Upheld by caller — see doc comment above.
+            // SAFETY: Upheld by caller - see doc comment above.
             unsafe { std::slice::from_raw_parts_mut(self.0.add(offset), len) }
         }
     }
@@ -775,13 +775,13 @@ fn decompress_blocks(
     Ok(all_data)
 }
 
-// ── Record boundary abstraction ───────────────────────────────────────
+// -- Record boundary abstraction --
 
 /// Efficient record boundary lookup, avoiding allocation for fixed-size records.
 enum RecordBounds {
-    /// All records are `fixed_size` bytes — boundaries computed arithmetically.
+    /// All records are `fixed_size` bytes - boundaries computed arithmetically.
     Fixed { fixed_size: usize },
-    /// Variable-length records — boundaries stored in a pre-computed Vec.
+    /// Variable-length records - boundaries stored in a pre-computed Vec.
     Variable { ends: Vec<usize> },
 }
 
@@ -913,7 +913,7 @@ fn parse_decimal_i128(s: &str, scale: usize) -> i128 {
     }
 }
 
-// ── Column builders ────────────────────────────────────────────────────
+// -- Column builders --
 
 /// Accumulates values for a single column and converts to a Polars [`Series`].
 ///
@@ -1074,7 +1074,7 @@ fn civil_to_days(y: i32, m: u32, d: u32) -> i32 {
 #[inline(always)]
 unsafe fn read_bytes_unchecked<const N: usize>(buf: &[u8], off: usize) -> [u8; N] {
     let mut out = [0u8; N];
-    // SAFETY: Upheld by caller — `off + N <= buf.len()`.
+    // SAFETY: Upheld by caller - `off + N <= buf.len()`.
     unsafe { std::ptr::copy_nonoverlapping(buf.as_ptr().add(off), out.as_mut_ptr(), N) };
     out
 }
@@ -1090,7 +1090,7 @@ fn transcode_utf16le(bytes: &[u8], out: &mut String) {
     out.reserve(n);
 
     // SAFETY: We maintain the UTF-8 invariant by only pushing valid UTF-8
-    // sequences — ASCII bytes are validated via `is_ascii` before push, and
+    // sequences - ASCII bytes are validated via `is_ascii` before push, and
     // non-ASCII code units go through `char::from_u32` / `encode_utf8`.
     let v = unsafe { out.as_mut_vec() };
     let mut i = 0;
@@ -1123,7 +1123,7 @@ fn transcode_utf16le(bytes: &[u8], out: &mut String) {
                 // hi_mask == 0xFFFF means every byte matched zero after masking
                 // (i.e. all high bytes of each u16 are 0x00).
                 if byte_mask == 0 && hi_mask == 0xFFFF {
-                    // All 8 code units are ASCII — pack to 8 bytes
+                    // All 8 code units are ASCII - pack to 8 bytes
                     let packed = _mm_packus_epi16(chunk, zero);
                     // Write 8 bytes at once
                     v.reserve(8);
@@ -1143,7 +1143,7 @@ fn transcode_utf16le(bytes: &[u8], out: &mut String) {
                     let hi = bytes[i + 1];
                     let cu = u16::from_le_bytes([lo, hi]);
                     if (0xD800..=0xDFFF).contains(&cu) {
-                        break; // surrogate — let scalar path handle the pair
+                        break; // surrogate - let scalar path handle the pair
                     }
                     if hi == 0 && lo < 0x80 {
                         v.push(lo);
@@ -1295,7 +1295,7 @@ impl ColumnBuilder {
 
     /// Push a value directly from the record buffer into this builder.
     ///
-    /// This is the hot-path method — it avoids creating any intermediate
+    /// This is the hot-path method - it avoids creating any intermediate
     /// `FieldValue` enum and parses dates/datetimes to native integers.
     ///
     /// # Safety rationale for `unsafe` blocks
@@ -1709,7 +1709,7 @@ impl ColumnBuilder {
     }
 }
 
-// ── Row-by-row reader ─────────────────────────────────────────────────
+// -- Row-by-row reader --
 
 /// A row-by-row YXDB file reader with field value extraction.
 ///
@@ -1820,7 +1820,7 @@ mod tests {
         format!("{}/test_files/{}", env!("CARGO_MANIFEST_DIR"), name)
     }
 
-    // ── AllTypes.yxdb: 2 rows × 16 columns covering every field type ──
+    // -- AllTypes.yxdb: 2 rows × 16 columns covering every field type --
 
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
@@ -1961,7 +1961,7 @@ mod tests {
         assert!(blob1.iter().all(|&b| b == 0xFF));
     }
 
-    // ── NullValues.yxdb: 3 rows with null patterns ──
+    // -- NullValues.yxdb: 3 rows with null patterns --
 
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
@@ -2053,7 +2053,7 @@ mod tests {
         let df =
             crate::read_yxdb(test_path("NullValues.yxdb"), crate::SpatialMode::Raw, false).unwrap();
 
-        // Row 2: mixed — NullByte is null, NullInt16 is 50
+        // Row 2: mixed - NullByte is null, NullInt16 is 50
         assert!(df
             .column("NullByte")
             .unwrap()
@@ -2072,7 +2072,7 @@ mod tests {
             .is_none());
     }
 
-    // ── ManyRecords.yxdb: 50,000 rows for LZF block stress test ──
+    // -- ManyRecords.yxdb: 50,000 rows for LZF block stress test --
 
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
@@ -2116,7 +2116,7 @@ mod tests {
         assert_eq!(label_col.get(49_999), Some("row_50000"));
     }
 
-    // ── LargeBlob.yxdb: large binary data ──
+    // -- LargeBlob.yxdb: large binary data --
 
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
@@ -2136,7 +2136,7 @@ mod tests {
         assert_eq!(col.get(3).unwrap().len(), 500_000);
     }
 
-    // ── People.yxdb: 200 rows of realistic mixed data ──
+    // -- People.yxdb: 200 rows of realistic mixed data --
 
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
@@ -2160,7 +2160,7 @@ mod tests {
         assert_eq!(df.column("PersonId").unwrap().null_count(), 0);
     }
 
-    // ── Strings.yxdb: string edge cases ──
+    // -- Strings.yxdb: string edge cases --
 
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
@@ -2194,7 +2194,7 @@ mod tests {
         assert_eq!(vwstr.get(4), Some("日本語テスト"));
     }
 
-    // ── SingleColumn.yxdb: simplest valid file ──
+    // -- SingleColumn.yxdb: simplest valid file --
 
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
@@ -2211,7 +2211,7 @@ mod tests {
         assert_eq!(col.get(4), Some(50));
     }
 
-    // ── Column projection tests ──
+    // -- Column projection tests --
 
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
@@ -2273,7 +2273,7 @@ mod tests {
         assert_eq!(df.height(), 200);
     }
 
-    // ── Error handling ──
+    // -- Error handling --
 
     #[test]
     fn reject_invalid_text_file() {
@@ -2293,7 +2293,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── YxdbRowReader tests ──
+    // -- YxdbRowReader tests --
 
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
@@ -2393,7 +2393,7 @@ mod tests {
         let mut count = 0u64;
         while reader.next().unwrap() {
             count += 1;
-            // Just iterate — don't extract values to test pure iteration speed
+            // Just iterate - don't extract values to test pure iteration speed
         }
         assert_eq!(count, 50_000);
     }
@@ -2408,7 +2408,7 @@ mod tests {
         assert!(reader.read_name("BoolCol").is_err());
     }
 
-    // ── transcode_utf16le tests ──
+    // -- transcode_utf16le tests --
 
     #[test]
     fn transcode_pure_ascii() {
@@ -2423,7 +2423,7 @@ mod tests {
 
     #[test]
     fn transcode_latin_extended_u0100_range() {
-        // U+0100 ("Ā") through U+017F — Latin Extended-A
+        // U+0100 ("Ā") through U+017F - Latin Extended-A
         // These have high byte 0x01 and low byte < 0x80, which previously
         // fooled the SIMD path into treating them as ASCII.
         let text = "ĀĂĄĆĈĊČ";
@@ -2438,7 +2438,7 @@ mod tests {
 
     #[test]
     fn transcode_eight_consecutive_u0100() {
-        // Exactly 8 code units of U+0100 — triggers SIMD batch on x86_64
+        // Exactly 8 code units of U+0100 - triggers SIMD batch on x86_64
         let text = "ĀĀĀĀĀĀĀĀ";
         let input: Vec<u8> = text
             .encode_utf16()
@@ -2562,7 +2562,7 @@ mod tests {
         assert_eq!(out, "World");
     }
 
-    // ── Additional SIMD transcoding edge cases ──────────────────────
+    // -- Additional SIMD transcoding edge cases --
 
     #[test]
     fn transcode_exactly_8_ascii() {
@@ -2620,7 +2620,7 @@ mod tests {
 
     #[test]
     fn transcode_bmp_boundary() {
-        // U+FFFD (replacement character) — highest non-surrogate BMP codepoint
+        // U+FFFD (replacement character) - highest non-surrogate BMP codepoint
         let text = "\u{FFFD}A\u{FFFD}";
         let input: Vec<u8> = text
             .encode_utf16()
@@ -2646,7 +2646,7 @@ mod tests {
 
     #[test]
     fn transcode_null_codepoints() {
-        // Embedded U+0000 — should be preserved
+        // Embedded U+0000 - should be preserved
         let input: Vec<u8> = vec![
             0x41, 0x00, // 'A'
             0x00, 0x00, // U+0000
@@ -2659,7 +2659,7 @@ mod tests {
 
     #[test]
     fn transcode_latin_ext_b() {
-        // U+0180-U+024F — Latin Extended-B
+        // U+0180-U+024F - Latin Extended-B
         let text = "ƀƁƂƃƄƅƆƇ";
         let input: Vec<u8> = text
             .encode_utf16()
@@ -2696,7 +2696,7 @@ mod tests {
 
     #[test]
     fn transcode_very_long_ascii() {
-        // 1000 ASCII chars — many SIMD batches
+        // 1000 ASCII chars - many SIMD batches
         let text: String = (0..1000)
             .map(|i| char::from(b'A' + (i % 26) as u8))
             .collect();
@@ -2711,7 +2711,7 @@ mod tests {
 
     #[test]
     fn transcode_very_long_nonascii() {
-        // 500 CJK characters — all go through non-ASCII path
+        // 500 CJK characters - all go through non-ASCII path
         let text: String = (0..500).map(|_| '日').collect();
         let input: Vec<u8> = text
             .encode_utf16()
@@ -2722,7 +2722,7 @@ mod tests {
         assert_eq!(out, text);
     }
 
-    // ── Column reader / projection edge cases ────────────────────────
+    // -- Column reader / projection edge cases --
 
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
@@ -2753,14 +2753,14 @@ mod tests {
         }
     }
 
-    // ── Row reader edge cases ────────────────────────────────────────
+    // -- Row reader edge cases --
 
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
     fn row_reader_read_index_all_fields() {
         let mut reader = YxdbRowReader::open(test_path("AllTypes.yxdb")).unwrap();
         assert!(reader.next().unwrap());
-        // Read every field by index — should not panic
+        // Read every field by index - should not panic
         for i in 0..reader.fields().len() {
             let _ = reader.read_index(i).unwrap();
         }
@@ -2801,11 +2801,11 @@ mod tests {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    // Regression tests — audit findings (v0.1.1)
-    // ══════════════════════════════════════════════════════════════════
+    // ---
+    // Regression tests - audit findings (v0.1.1)
+    // ---
 
-    /// Audit #6 — File smaller than 512 bytes produces a clear error message.
+    /// Audit #6 - File smaller than 512 bytes produces a clear error message.
     #[test]
     fn regression_small_file_error() {
         use std::io::Write;
@@ -2823,7 +2823,7 @@ mod tests {
         );
     }
 
-    /// Audit #11 — Projecting an unknown column name returns an error.
+    /// Audit #11 - Projecting an unknown column name returns an error.
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
     fn regression_unknown_column_rejected() {
@@ -2837,7 +2837,7 @@ mod tests {
         );
     }
 
-    /// Audit #11 (companion) — All-unknown columns also error.
+    /// Audit #11 (companion) - All-unknown columns also error.
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
     fn regression_all_unknown_columns_rejected() {
@@ -2846,7 +2846,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// Audit #7 — Empty DataFrame (0 rows) reads back with correct schema.
+    /// Audit #7 - Empty DataFrame (0 rows) reads back with correct schema.
     #[test]
     fn regression_empty_dataframe_schema_preserved() {
         use polars::prelude::*;
@@ -2876,7 +2876,7 @@ mod tests {
         assert_eq!(df3.get_column_names()[0].as_str(), "name");
     }
 
-    /// Audit #5 — Large binary blob (> BLOCK_SIZE) roundtrips through reader.
+    /// Audit #5 - Large binary blob (> BLOCK_SIZE) roundtrips through reader.
     /// Ensures the dynamic LZF buffer sizing doesn't choke on oversized
     /// uncompressed blocks.
     #[test]
@@ -2899,7 +2899,7 @@ mod tests {
         assert!(col.get(0).unwrap().iter().all(|&b| b == 0xAB));
     }
 
-    /// Audit #11 — Projected read via read_yxdb_columns also rejects unknowns.
+    /// Audit #11 - Projected read via read_yxdb_columns also rejects unknowns.
     #[ignore = "requires test_files/*.yxdb fixtures (never committed) - see TODO"]
     #[test]
     fn regression_read_yxdb_columns_rejects_unknown() {

@@ -47,8 +47,8 @@ fn parse_spatial_mode(mode: &str) -> PyResult<SpatialMode> {
 /// Read a YXDB file and return a Polars DataFrame directly (zero-copy via Arrow C Data Interface).
 ///
 /// ``spatial`` controls how SpatialObj columns are returned:
-///   - ``"wkb"`` (default) — decode SHP → ISO WKB
-///   - ``"raw"`` — keep the internal SHP bytes
+///   - ``"wkb"`` (default) - decode SHP → ISO WKB
+///   - ``"raw"`` - keep the internal SHP bytes
 ///
 /// ```python
 /// from sigilyx import read_yxdb_df
@@ -373,7 +373,7 @@ fn write_yxdb(
     Ok(())
 }
 
-// ── Streaming Writer ───────────────────────────────────────────────────
+// -- Streaming Writer --
 
 /// A streaming YXDB writer that accepts data in batches.
 ///
@@ -429,12 +429,12 @@ impl YxdbStreamWriter {
         Ok(count)
     }
 
-    /// Context manager entry — returns self.
+    /// Context manager entry - returns self.
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    /// Context manager exit — automatically calls finish() if not already done.
+    /// Context manager exit - automatically calls finish() if not already done.
     #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
     fn __exit__(
         &mut self,
@@ -458,7 +458,7 @@ impl YxdbStreamWriter {
     }
 }
 
-// ── Streaming Batch Reader ─────────────────────────────────────────────
+// -- Streaming Batch Reader --
 
 /// A streaming, columnar YXDB batch reader exposed to Python.
 ///
@@ -483,10 +483,10 @@ struct PyYxdbBatchReader {
 impl PyYxdbBatchReader {
     /// Create a new streaming batch reader.
     ///
-    /// * `path`       – YXDB file path.
-    /// * `batch_size` – Maximum rows per yielded DataFrame.
-    /// * `columns`    – Optional list of column names to project.
-    /// * `n_rows`     – Optional total row limit (early termination).
+    /// * `path` - YXDB file path.
+    /// * `batch_size` - Maximum rows per yielded DataFrame.
+    /// * `columns` - Optional list of column names to project.
+    /// * `n_rows` - Optional total row limit (early termination).
     #[new]
     #[pyo3(signature = (path, batch_size = 65536, columns = None, n_rows = None))]
     fn new(
@@ -575,7 +575,7 @@ impl PyYxdbBatchReader {
     }
 }
 
-// ── Row-by-Row Reader ────────────────────────────────────────────────
+// -- Row-by-Row Reader --
 
 /// Convert a Rust FieldValue to a Python object.
 fn field_value_to_py(py: Python<'_>, val: FieldValue) -> Py<PyAny> {
@@ -722,7 +722,7 @@ impl PyYxdbRowReader {
     }
 }
 
-/// SigilYX — High-performance YXDB file reader and writer.
+/// SigilYX - High-performance YXDB file reader and writer.
 #[pymodule]
 fn sigilyx(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_yxdb, m)?)?;

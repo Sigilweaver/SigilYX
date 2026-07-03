@@ -40,7 +40,7 @@ df.yxdb.write("output.yxdb")
 
 ### Polars Integration
 
-Importing `sigilyx` registers official [Polars namespace plugins](https://docs.pola.rs/api/python/stable/reference/api.html) and top-level IO aliases. No extra calls needed — just `import sigilyx`.
+Importing `sigilyx` registers official [Polars namespace plugins](https://docs.pola.rs/api/python/stable/reference/api.html) and top-level IO aliases. No extra calls needed - just `import sigilyx`.
 
 ```python
 import polars as pl
@@ -60,7 +60,7 @@ lf.yxdb.sink("output.yxdb")              # pl.LazyFrame → .yxdb file (streamin
 ```python
 import sigilyx as yx
 
-# Polars DataFrame — fastest, zero-copy via Arrow C Data Interface
+# Polars DataFrame - fastest, zero-copy via Arrow C Data Interface
 df = yx.read_yxdb("data.yxdb")
 
 # PyArrow Table
@@ -92,15 +92,15 @@ Iterate over large files with constant memory usage:
 ```python
 import sigilyx as yx
 
-# Basic iteration — each batch is a Polars DataFrame
+# Basic iteration - each batch is a Polars DataFrame
 for batch in yx.read_yxdb_batches("data.yxdb", batch_size=100_000):
     process(batch)
 
-# Column projection — only materialise the columns you need
+# Column projection - only materialise the columns you need
 for batch in yx.read_yxdb_batches("data.yxdb", columns=["Id", "Name", "Amount"]):
     process(batch)
 
-# Row limit — stop after N total rows
+# Row limit - stop after N total rows
 for batch in yx.read_yxdb_batches("data.yxdb", n_rows=5_000):
     process(batch)
 ```
@@ -117,13 +117,13 @@ lf = yx.scan("data.yxdb")
 
 result = lf.filter(pl.col("amount") > 100).collect()
 
-# Projection pushdown — only selected columns are materialised in Rust
+# Projection pushdown - only selected columns are materialised in Rust
 top10 = lf.select("id", "name").head(10).collect()
 ```
 
 > **Pushdown support:** projection (`select` / `with_columns`) and row-limit
 > (`n_rows` / `.head()`) are pushed down to the Rust reader.
-> Predicate pushdown is not possible — YXDB rows are LZF-compressed with no
+> Predicate pushdown is not possible - YXDB rows are LZF-compressed with no
 > block-level statistics, so `.filter()` is applied after the scan.
 
 ### Metadata
@@ -136,7 +136,7 @@ fields = yx.read_yxdb_fields("data.yxdb")
 for f in fields:
     print(f.name, f.field_type, f.size)
 
-# Record count from the file header — no data read
+# Record count from the file header - no data read
 n = yx.record_count("data.yxdb")
 ```
 

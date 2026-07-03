@@ -33,7 +33,7 @@ def _yxdb(name: str) -> str:
     return str(TEST_DIR / name)
 
 
-# ── Helpers to build WKB geometries ────────────────────────────────────
+# -- Helpers to build WKB geometries --
 
 
 def _wkb_point(x: float, y: float) -> bytes:
@@ -91,7 +91,7 @@ def _write_spatial_yxdb(
     sigilyx.write_yxdb(path, df, spatial_columns=spatial)
 
 
-# ── read_spatial_info() ────────────────────────────────────────────────
+# -- read_spatial_info() --
 
 
 class TestReadSpatialInfo:
@@ -139,7 +139,7 @@ class TestReadSpatialInfo:
         assert info["file_id"] > 0
 
 
-# ── read_yxdb_geoarrow() ──────────────────────────────────────────────
+# -- read_yxdb_geoarrow() --
 
 
 class TestReadYxdbGeoArrow:
@@ -209,7 +209,7 @@ class TestReadYxdbGeoArrow:
             assert b"ARROW:extension:name" not in meta
 
 
-# ── _apply_geoarrow_metadata() ────────────────────────────────────────
+# -- _apply_geoarrow_metadata() --
 
 
 class TestApplyGeoArrowMetadata:
@@ -244,7 +244,7 @@ class TestApplyGeoArrowMetadata:
         assert meta[b"ARROW:extension:name"] == b"geoarrow.wkb"
 
 
-# ── read_yxdb() with spatial="geoarrow" ───────────────────────────────
+# -- read_yxdb() with spatial="geoarrow" --
 
 
 class TestReadYxdbGeoArrowMode:
@@ -275,7 +275,7 @@ class TestReadYxdbGeoArrowMode:
         assert df_wkb["geom"].to_list() == df_geo["geom"].to_list()
 
 
-# ── read_yxdb_geo() with GeoPandas ────────────────────────────────────
+# -- read_yxdb_geo() with GeoPandas --
 
 
 class TestReadYxdbGeo:
@@ -344,7 +344,7 @@ class TestReadYxdbGeo:
         assert abs(pt.x - 10.0) < 1e-10
 
 
-# ── write_yxdb_geo() ──────────────────────────────────────────────────
+# -- write_yxdb_geo() --
 
 
 class TestWriteYxdbGeo:
@@ -439,7 +439,7 @@ class TestWriteYxdbGeo:
         assert "geometry" in info["spatial_columns"]
 
 
-# ── shp_to_wkb / wkb_to_shp low-level ─────────────────────────────────
+# -- shp_to_wkb / wkb_to_shp low-level --
 
 
 class TestShpWkbConversion:
@@ -495,7 +495,7 @@ class TestShpWkbConversion:
         assert len(wkb2) > 5
 
 
-# ── Spatial write/read roundtrip via Polars ────────────────────────────
+# -- Spatial write/read roundtrip via Polars --
 
 
 class TestSpatialPolarsRoundtrip:
@@ -583,7 +583,7 @@ class TestSpatialPolarsRoundtrip:
             assert len(wkb) > 5
 
 
-# ── Existing files with all modes ──────────────────────────────────────
+# -- Existing files with all modes --
 
 
 class TestExistingFilesAllModes:
@@ -602,7 +602,7 @@ class TestExistingFilesAllModes:
         assert df_default.shape == df_raw.shape == df_wkb.shape == df_geo.shape
 
 
-# ── PyArrow read_yxdb_arrow with spatial ───────────────────────────────
+# -- PyArrow read_yxdb_arrow with spatial --
 
 
 class TestReadYxdbArrowSpatial:

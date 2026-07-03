@@ -48,7 +48,7 @@ try:
 except PackageNotFoundError:
     __version__ = "0.0.0-dev"
 
-# ── Public API re-exports ───────────────────────────────────────────────
+# -- Public API re-exports --
 # The implementation is split across private sub-modules for
 # maintainability.  Everything listed in __all__ is importable
 # directly from ``sigilyx``.

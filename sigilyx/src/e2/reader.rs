@@ -1,4 +1,4 @@
-//! E2 YXDB reader — block decompression and record framing.
+//! E2 YXDB reader - block decompression and record framing.
 //!
 //! The E2 format uses Snappy-compressed blocks with compact variable-length
 //! record encoding. This module handles:
@@ -87,7 +87,7 @@ impl E2Reader {
     /// By default, E2 files containing field types that have never been
     /// verified against real corpus data (Time, WString, Blob, SpatialObj)
     /// will produce an error. Call this with `true` to attempt reading
-    /// them anyway — the decoders are speculative and may produce incorrect
+    /// them anyway - the decoders are speculative and may produce incorrect
     /// results.
     pub fn set_allow_unverified(&mut self, allow: bool) {
         self.allow_unverified = allow;
@@ -264,7 +264,7 @@ impl E2Reader {
                 Ok(Some(Block::Record(decompressed)))
             }
             0x03 | 0x04 => {
-                // Spatial index blocks — skip them.
+                // Spatial index blocks - skip them.
                 // Structure: [type] [block_size:u32] [inner_size:u32] [0x0A] [snappy data]
                 // The Snappy data extends 4 bytes past the declared block_size,
                 // but inner_size (4 bytes) is already outside the block_size count.
@@ -513,7 +513,7 @@ impl E2Reader {
                 }
             }
         } else {
-            // No blob blocks available — convert any BlobRef to null
+            // No blob blocks available - convert any BlobRef to null
             for (i, val) in values.iter_mut().enumerate() {
                 if matches!(val, FieldValue::BlobRef(_, _)) {
                     let ft = self.fields[i].field_type;

@@ -6,8 +6,8 @@ The YXDB (Alteryx Database) format has two known variants:
 
 | Variant | Engine | Status | Spec |
 |---------|--------|--------|------|
-| **E1** | Original (legacy) engine | **Supported** — full read/write | [SPECIFICATION-E1.md](SPECIFICATION-E1.md) |
-| **E2** | AMP (Alteryx Multi-threaded Processing) | **Not yet supported** — research phase | [SPECIFICATION-E2.md](SPECIFICATION-E2.md) |
+| **E1** | Original (legacy) engine | **Supported** - full read/write | [SPECIFICATION-E1.md](SPECIFICATION-E1.md) |
+| **E2** | AMP (Alteryx Multi-threaded Processing) | **Not yet supported** - research phase | [SPECIFICATION-E2.md](SPECIFICATION-E2.md) |
 
 AMP-enabled workflows produce E2 YXDB files, which use a different binary layout than E1.
 
@@ -19,14 +19,14 @@ See the individual spec documents for format details.
 
 The two format variants were developed under fundamentally different methodologies, driven by the available materials in each case. Both approaches are documented here for transparency.
 
-### E1 — Reference Implementation Study
+### E1 - Reference Implementation Study
 
 E1 was developed with strong separation from Alteryx: multiple independent open-source reference implementations existed, Alteryx themselves had published one under a permissive license, and ample E1 `.yxdb` files were freely available on the public internet.
 
 **Process:**
 
-1. **Study existing open-source implementations.** Seven independent implementations were reviewed across C++, Go, Python, Java, and .NET — including [Alteryx/OpenYXDB](https://github.com/alteryx/OpenYXDB), which Alteryx published under the MIT License. This is the highest possible bar for legitimacy: Alteryx themselves made the format knowledge freely available.
-2. **Write a specification in plain language.** The [E1 spec](SPECIFICATION-E1.md) was written from this study — describing the format in terms of offsets, types, and encoding rules, without copying any code.
+1. **Study existing open-source implementations.** Seven independent implementations were reviewed across C++, Go, Python, Java, and .NET - including [Alteryx/OpenYXDB](https://github.com/alteryx/OpenYXDB), which Alteryx published under the MIT License. This is the highest possible bar for legitimacy: Alteryx themselves made the format knowledge freely available.
+2. **Write a specification in plain language.** The [E1 spec](SPECIFICATION-E1.md) was written from this study - describing the format in terms of offsets, types, and encoding rules, without copying any code.
 3. **Generate test assets using the OSS tools.** Test files were created using OpenYXDB (C++ library, MIT License) to produce a known-good corpus, independent of Alteryx Designer.
 4. **Confirm the spec via binary analysis.** Each field in the spec was verified against actual file bytes using a hex editor, ensuring the written spec matches reality.
 5. **Implement independently.** The Rust implementation was written from the spec. No code was ported or translated from any reference implementation.
@@ -36,15 +36,15 @@ E1 was developed with strong separation from Alteryx: multiple independent open-
 
 ---
 
-### E2 — Binary Analysis from Independently Sourced Files
+### E2 - Binary Analysis from Independently Sourced Files
 
 E2 cannot follow the E1 methodology. No open-source E2 implementations exist, no E2 test files have been found, and we cannot use Alteryx software to generate them. The methodology is correspondingly more conservative and more carefully documented.
 
 **Process:**
 
-1. **Source E2 file(s) at arm's length.** Files must be discovered "in the wild" on the public internet — already existing for an independent purpose, with no involvement from anyone connected to this project. Full sourcing rules and prohibited sources are documented in [SPECIFICATION-E2.md](SPECIFICATION-E2.md).
+1. **Source E2 file(s) at arm's length.** Files must be discovered "in the wild" on the public internet - already existing for an independent purpose, with no involvement from anyone connected to this project. Full sourcing rules and prohibited sources are documented in [SPECIFICATION-E2.md](SPECIFICATION-E2.md).
 2. **Document provenance before any analysis.** Before opening a file, record the source URL, archive URL (Software Heritage permalink or archive.org snapshot, created before analysis begins), date obtained, SHA-256 hash, file size, independence attestation, and EULA status. The provenance log lives in the E2 spec itself.
-3. **Derive the spec entirely from binary analysis.** With no reference implementations to study, the format must be reconstructed from first principles — examining byte patterns, comparing files, forming and testing hypotheses about structure.
+3. **Derive the spec entirely from binary analysis.** With no reference implementations to study, the format must be reconstructed from first principles - examining byte patterns, comparing files, forming and testing hypotheses about structure.
 4. **Write the spec before writing any code.** The specification must be complete and reviewed before implementation begins, enforcing a clean separation between analysis and code.
 5. **Implement from the spec.** The implementation is based solely on the written spec, not on any file bytes directly.
 6. **Ship as beta; generate self-hosted test assets once the writer is verified.** The test corpus is produced by SigilYX's own writer, not by sourced files. Sourced files are used for analysis only and are never committed to source control.

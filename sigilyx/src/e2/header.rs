@@ -5,7 +5,7 @@
 //! - Bytes 64..68: File ID `0x00440208` (u32 LE)
 //! - Bytes 68..72: Unknown constant `0x40000001` (u32 LE)
 //! - Bytes 72..96: All zeros (reserved)
-//! - Bytes 96..100: Metadata size in bytes (u32 LE) — byte length of UTF-8 XML
+//! - Bytes 96..100: Metadata size in bytes (u32 LE) - byte length of UTF-8 XML
 
 use crate::error::{Result, YxdbError};
 use crate::field::{FieldMeta, FieldType};

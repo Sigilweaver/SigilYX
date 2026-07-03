@@ -1,7 +1,7 @@
 //! SHP ↔ WKB geometry conversion for Alteryx YXDB `SpatialObj` fields.
 //!
 //! Alteryx stores geometry data in `SpatialObj` fields using the ESRI Shapefile
-//! (SHP) record format — each cell contains a single SHP geometry record
+//! (SHP) record format - each cell contains a single SHP geometry record
 //! (shape type + coordinate arrays). This module converts between that
 //! format and ISO WKB (Well-Known Binary), which is understood by all
 //! major GIS libraries (Shapely, GeoPandas, PostGIS, GDAL, etc.).
@@ -26,7 +26,7 @@
 
 use crate::error::{Result, YxdbError};
 
-// ── SHP Shape Types ────────────────────────────────────────────────────
+// -- SHP Shape Types --
 
 const SHP_NULL: i32 = 0;
 const SHP_POINT: i32 = 1;
@@ -42,7 +42,7 @@ const SHP_POLYLINE_M: i32 = 23;
 const SHP_POLYGON_M: i32 = 25;
 const SHP_MULTIPOINT_M: i32 = 28;
 
-// ── ISO WKB Geometry Types ─────────────────────────────────────────────
+// -- ISO WKB Geometry Types --
 
 const WKB_POINT: u32 = 1;
 const WKB_LINESTRING: u32 = 2;
@@ -56,13 +56,13 @@ const WKB_Z: u32 = 1000;
 /// ISO WKB M offset (add to base type for M dimension).
 const WKB_M: u32 = 2000;
 
-/// SHP "no data" sentinel for M values — any M ≤ this is "no data".
+/// SHP "no data" sentinel for M values - any M ≤ this is "no data".
 const SHP_M_NO_DATA: f64 = -1e38;
 
 /// WKB byte order: little-endian.
 const WKB_LE: u8 = 1;
 
-// ── Public API ─────────────────────────────────────────────────────────
+// -- Public API --
 
 /// Convert SHP geometry bytes (Alteryx SpatialObj) to ISO WKB.
 ///
@@ -137,7 +137,7 @@ pub fn wkb_to_shp(wkb: &[u8]) -> Result<Vec<u8>> {
     }
 }
 
-// ── SHP → WKB conversion helpers ──────────────────────────────────────
+// -- SHP → WKB conversion helpers --
 
 fn shp_point_to_wkb(shp: &[u8]) -> Result<Option<Vec<u8>>> {
     ensure_len(shp, 20, "Point")?;
@@ -341,7 +341,7 @@ fn shp_multipoly_to_wkb(shp: &[u8], has_z: bool, has_m: bool) -> Result<Option<V
             // Exterior ring (clockwise) or first ring always starts a new polygon
             polygons.push(vec![(start, end)]);
         } else {
-            // Interior ring (hole) — add to most recent polygon
+            // Interior ring (hole) - add to most recent polygon
             polygons.last_mut().unwrap().push((start, end));
         }
     }
@@ -443,7 +443,7 @@ fn shp_multipoint_to_wkb(shp: &[u8], has_z: bool, has_m: bool) -> Result<Option<
     Ok(Some(out))
 }
 
-// ── WKB → SHP conversion helpers ──────────────────────────────────────
+// -- WKB → SHP conversion helpers --
 
 fn wkb_point_to_shp(wkb: &[u8], is_le: bool, has_z: bool, has_m: bool) -> Result<Vec<u8>> {
     let coord_start = 5; // after byte_order + type
@@ -620,7 +620,7 @@ fn wkb_multipolygon_to_shp(wkb: &[u8], is_le: bool, has_z: bool, has_m: bool) ->
     build_shp_polygon(&ring_refs, has_z, has_m)
 }
 
-// ── SHP output builders ───────────────────────────────────────────────
+// -- SHP output builders --
 
 /// N-dimensional coordinate (up to XYZM).
 #[derive(Clone, Copy)]
@@ -827,7 +827,7 @@ fn build_shp_multipoint(coords: &[CoordND], has_z: bool, has_m: bool) -> Result<
     Ok(out)
 }
 
-// ── SHP parsing helpers ───────────────────────────────────────────────
+// -- SHP parsing helpers --
 
 /// Parse the common header for SHP PolyLine and Polygon records.
 ///
@@ -876,7 +876,7 @@ fn read_f64_array(shp: &[u8], offset: usize, count: usize) -> Result<Vec<f64>> {
     Ok(vals)
 }
 
-// ── WKB parsing helpers ───────────────────────────────────────────────
+// -- WKB parsing helpers --
 
 /// Parse a WKB LineString's coordinate list (starting at `offset` which points
 /// to the num_points field). Returns the coordinates and the number of
@@ -952,7 +952,7 @@ fn parse_wkb_polygon_rings(
     Ok(rings)
 }
 
-// ── Geometry math helpers ─────────────────────────────────────────────
+// -- Geometry math helpers --
 
 /// Compute the signed area of a 2D ring (Shoelace formula).
 ///
@@ -1005,7 +1005,7 @@ fn range_1d<F: Fn(&CoordND) -> f64>(coords: &[&CoordND], f: F) -> (f64, f64) {
     (min, max)
 }
 
-// ── Low-level binary helpers ──────────────────────────────────────────
+// -- Low-level binary helpers --
 
 #[inline]
 fn read_i32_le(buf: &[u8], offset: usize) -> i32 {
@@ -1088,14 +1088,14 @@ fn coord_byte_size(has_z: bool, has_m: bool) -> usize {
     dim * 8
 }
 
-// ── Spatial Mode ───────────────────────────────────────────────────────
+// -- Spatial Mode --
 
 /// Controls how `SpatialObj` columns are represented after reading (or
 /// expected before writing).
 ///
 /// | Mode       | Read behaviour                          | Write behaviour                         |
 /// |------------|-----------------------------------------|-----------------------------------------|
-/// | `Raw`      | Keep the internal SHP bytes as `Binary`  | N/A — spatial columns are raw SHP       |
+/// | `Raw`      | Keep the internal SHP bytes as `Binary`  | N/A - spatial columns are raw SHP       |
 /// | `Wkb`      | Decode SHP → ISO WKB `Binary`            | Encode WKB → SHP for `SpatialObj` fields |
 /// | `GeoArrow` | Decode SHP → ISO WKB, tag as GeoArrow   | Same as Wkb (WKB → SHP conversion)     |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1115,7 +1115,7 @@ pub enum SpatialMode {
     GeoArrow,
 }
 
-// ── DataFrame-level conversion ────────────────────────────────────────
+// -- DataFrame-level conversion --
 
 use crate::field::{FieldMeta, FieldType};
 use polars::prelude::*;
@@ -1208,7 +1208,7 @@ pub fn convert_spatial_columns_to_shp(df: &DataFrame, fields: &[FieldMeta]) -> R
     DataFrame::new(height, columns).map_err(|e| YxdbError::ConversionError(e.to_string()))
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────
+// -- Tests --
 
 #[cfg(test)]
 mod tests {

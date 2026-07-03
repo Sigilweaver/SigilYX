@@ -49,7 +49,7 @@ def _run_dump(path: str) -> tuple[list[str], list[str], list[list[str]]]:
     return names, types, rows
 
 
-# ── File size baselines ─────────────────────────────────────────────────
+# -- File size baselines --
 
 
 # Baselines are the SigilYX roundtrip file sizes after all optimisations.
@@ -105,7 +105,7 @@ class TestFileSizeBaselines:
             os.unlink(tmp)
 
 
-# ── Type fidelity tests ─────────────────────────────────────────────────
+# -- Type fidelity tests --
 
 
 class TestTypeFidelity:
@@ -249,7 +249,7 @@ class TestTypeFidelity:
         )
 
 
-# ── Data roundtrip correctness ──────────────────────────────────────────
+# -- Data roundtrip correctness --
 
 
 ROUNDTRIP_FILES = [
@@ -310,7 +310,7 @@ class TestRoundtripCorrectness:
             os.unlink(tmp)
 
 
-# ── LZF compression quality ─────────────────────────────────────────────
+# -- LZF compression quality --
 
 
 class TestLzfCompression:
@@ -353,7 +353,7 @@ class TestLzfCompression:
             os.unlink(tmp.name)
 
 
-# ── Cross-implementation type validation ─────────────────────────────────
+# -- Cross-implementation type validation --
 
 
 # Expected YXDB type for each Polars dtype when written by SigilYX

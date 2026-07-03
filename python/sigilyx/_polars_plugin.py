@@ -139,7 +139,7 @@ def register_polars() -> bool:
             pl.LazyFrame.sink_yxdb = _lf_sink_yxdb_deprecated  # type: ignore[attr-defined]
 
         # Namespace plugins (df.yxdb / lf.yxdb) are registered via
-        # the @pl.api decorators above — nothing more needed here.
+        # the @pl.api decorators above - nothing more needed here.
         return True
 
     except ImportError:

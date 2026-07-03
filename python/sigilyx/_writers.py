@@ -31,7 +31,7 @@ def _validate_df_for_write(df: object) -> pl.DataFrame:
             f"Use write_yxdb_pandas() for pandas DataFrames or write_yxdb_arrow() for PyArrow Tables."
         )
 
-    # Unsupported compound types — reject with a clear message
+    # Unsupported compound types - reject with a clear message
     _UNSUPPORTED_TYPES = (pl.List, pl.Struct, pl.Array, pl.Object, pl.Duration)
     for col_name in df.columns:
         dtype = df[col_name].dtype
@@ -144,7 +144,7 @@ def write_yxdb(
 
     Notes
     -----
-    YXDB DateTime fields have second-level precision — sub-second data
+    YXDB DateTime fields have second-level precision - sub-second data
     is truncated. Timezone information is not stored; timezone-aware
     columns are written as UTC values with the timezone stripped.
 
@@ -370,7 +370,7 @@ def write_yxdb_batches(
 
     if writer is None:
         raise ValueError(
-            "Cannot write empty batch iterator — need at least one batch for schema"
+            "Cannot write empty batch iterator - need at least one batch for schema"
         )
 
     return writer.finish()

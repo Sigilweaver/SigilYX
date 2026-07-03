@@ -1,8 +1,8 @@
 # YXDB E2 File Format Specification
 
-*Status: **Binary analysis in progress** — 168+ E2 files sourced from 39+ repositories, 15 of ~17 field types fully decoded (Blob, SpatialObj, and Byte now confirmed, bringing total to 15 of 17). Implementation covers the vast majority of real-world Alteryx workflows. See [Implementation Readiness Assessment](#implementation-readiness-assessment).*
+*Status: **Binary analysis in progress** - 168+ E2 files sourced from 39+ repositories, 15 of ~17 field types fully decoded (Blob, SpatialObj, and Byte now confirmed, bringing total to 15 of 17). Implementation covers the vast majority of real-world Alteryx workflows. See [Implementation Readiness Assessment](#implementation-readiness-assessment).*
 
-> **Established:** March 15, 2026. This document was created and committed to source control **before any E2 development work began** — no E2 files have been sourced, no binary analysis has been performed, and no E2 code has been written. The purpose is to document the process, sourcing rules, and legal constraints that will govern E2 development, so that the project's approach is unambiguous from the start.
+> **Established:** March 15, 2026. This document was created and committed to source control **before any E2 development work began** - no E2 files have been sourced, no binary analysis has been performed, and no E2 code has been written. The purpose is to document the process, sourcing rules, and legal constraints that will govern E2 development, so that the project's approach is unambiguous from the start.
 
 > **Binary analysis began:** March 16, 2026. 72 E2 files were sourced from seven independent GitHub repositories with full provenance. Expanded to 118 E2 files across 23 repositories on March 17, 2026. Expanded to 144 E2 files across 26 repositories on March 18, 2026. See [Provenance Log](#provenance-log) and [Analysis Log](#analysis-log).
 
@@ -12,15 +12,15 @@
 
 ### Sourcing Methodology
 
-We started by looking for `.yxdb` files on GitHub — just searching for the extension and seeing what turned up. Early on, we tried opening some of these with [yxdb-py](https://github.com/tlarsendataguy-yxdb/yxdb-py) (MIT-licensed Python reader). Most opened fine, but a handful would fail immediately. Hex-dumping one of the failures showed the magic string `"Alteryx e2 Database file"` instead of `"Alteryx Database File"` — that’s how we discovered E2 was a distinct binary format.
+We started by looking for `.yxdb` files on GitHub - just searching for the extension and seeing what turned up. Early on, we tried opening some of these with [yxdb-py](https://github.com/tlarsendataguy-yxdb/yxdb-py) (MIT-licensed Python reader). Most opened fine, but a handful would fail immediately. Hex-dumping one of the failures showed the magic string `"Alteryx e2 Database file"` instead of `"Alteryx Database File"` - that’s how we discovered E2 was a distinct binary format.
 
-From there we scaled the search: looking for repos that contained `.yxdb` files whose first bytes matched the E2 magic. Every sourced file has a provenance entry below with SHA-256 hash, archive URL, and independence attestation — see [Provenance Log](#provenance-log).
+From there we scaled the search: looking for repos that contained `.yxdb` files whose first bytes matched the E2 magic. Every sourced file has a provenance entry below with SHA-256 hash, archive URL, and independence attestation - see [Provenance Log](#provenance-log).
 
 All analysis was performed on local copies. Sourced files are never committed to source control.
 
 ### Sourcing Status
 
-- ~~No E2 YXDB files have been found on the public internet~~ — **23 sources identified (2026-03-16, expanded 2026-03-17).** See [Provenance Log](#provenance-log).
+- ~~No E2 YXDB files have been found on the public internet~~ - **23 sources identified (2026-03-16, expanded 2026-03-17).** See [Provenance Log](#provenance-log).
 - 118 E2 files across 23 independent sources, ranging from 338 bytes to 7.6 MB
 - No open-source E2 readers or writers exist
 
@@ -35,10 +35,10 @@ E2 uses a **100-byte header**, not the 512-byte header of E1.
 | Offset | Size | Type | Value | Status |
 |--------|------|------|-------|--------|
 | 0 | 64 | ASCII | `"Alteryx e2 Database file"` space-padded to 64 bytes | **CONFIRMED** |
-| 64 | 4 | u32 LE | `0x00440208` — File ID | **CONFIRMED** |
-| 68 | 4 | u32 LE | `0x40000001` — unknown purpose, constant | **CONFIRMED** |
-| 72 | 24 | — | All zeros | **CONFIRMED** |
-| 96 | 4 | u32 LE | **Metadata size** — byte length of the UTF-8 XML metadata | **CONFIRMED** |
+| 64 | 4 | u32 LE | `0x00440208` - File ID | **CONFIRMED** |
+| 68 | 4 | u32 LE | `0x40000001` - unknown purpose, constant | **CONFIRMED** |
+| 72 | 24 | - | All zeros | **CONFIRMED** |
+| 96 | 4 | u32 LE | **Metadata size** - byte length of the UTF-8 XML metadata | **CONFIRMED** |
 
 Key differences from E1:
 - Magic string is `"Alteryx e2 Database file"` (not `"Alteryx Database File"`), which we discovered from hex-dumping our first E2 sample
@@ -65,14 +65,14 @@ Immediately after the XML metadata (at offset `100 + metadata_size`).
 - Begins with a **block type byte**: `0x00`, `0x01`, `0x02`, `0x03`, or `0x04`
 - Multiple blocks can be chained (observed in several files: Task1Output at 1.1 MB has two consecutive `0x02` blocks; Tree Survey at 11 MB has five `0x02` blocks interleaved with `0x03` blocks)
 - For `0x02` blocks: the type byte is followed by a **u32 LE block size**, then that many bytes of block data
-- For `0x01` blocks: **blob block** — stores large variable-length values (V_WString, Blob, SpatialObj) that are too large for inline storage. See [Block Internal Structure (type 0x01)](#block-internal-structure-type-0x01).
-- For `0x03` blocks: **spatial index block** — per-record-block spatial index. Appears after each `0x02` block in files containing SpatialObj fields. See [Block Types 0x03 and 0x04 (Spatial Index)](#block-types-0x03-and-0x04-spatial-index).
-- For `0x04` blocks: **global spatial index block** — file-level spatial index. Appears once, after all `0x02`/`0x03` pairs. See [Block Types 0x03 and 0x04 (Spatial Index)](#block-types-0x03-and-0x04-spatial-index).
+- For `0x01` blocks: **blob block** - stores large variable-length values (V_WString, Blob, SpatialObj) that are too large for inline storage. See [Block Internal Structure (type 0x01)](#block-internal-structure-type-0x01).
+- For `0x03` blocks: **spatial index block** - per-record-block spatial index. Appears after each `0x02` block in files containing SpatialObj fields. See [Block Types 0x03 and 0x04 (Spatial Index)](#block-types-0x03-and-0x04-spatial-index).
+- For `0x04` blocks: **global spatial index block** - file-level spatial index. Appears once, after all `0x02`/`0x03` pairs. See [Block Types 0x03 and 0x04 (Spatial Index)](#block-types-0x03-and-0x04-spatial-index).
 - For `0x00`: sentinel byte marking end of block stream. Observed in 1 file with 0 records (day23_1, 338 bytes) where the sentinel immediately follows the metadata.
 - After the last block: a **null byte** (`0x00`), then the sentinel and footer
 
 Block type distribution across the corpus:
-- `0x02`: all files with records (standard record blocks — all field types)
+- `0x02`: all files with records (standard record blocks - all field types)
 - `0x01`: files with large blobs (Day12 for V_WString, blood cell/loan files for Blob, Maine Counties/Gulf of Maine for SpatialObj)
 - `0x03`: files with SpatialObj fields (one per `0x02` block, spatial index)
 - `0x04`: files with SpatialObj fields (one per file, global spatial index)
@@ -84,20 +84,20 @@ The block data (after the type byte and u32 block size) has the following struct
 
 | Offset | Size | Type | Content |
 |--------|------|------|---------|
-| 0 | 1 | byte | Constant `0x0A` — block format marker |
-| 1 | 1–5 | LEB128 varint | **Snappy uncompressed length** — total decompressed size |
+| 0 | 1 | byte | Constant `0x0A` - block format marker |
+| 1 | 1-5 | LEB128 varint | **Snappy uncompressed length** - total decompressed size |
 | 1+N | remaining | bytes | **Snappy compressed payload** (raw block format, no framing) |
 
 The Snappy payload uses the standard [Google Snappy](https://github.com/google/snappy) raw block format. The varint at position 1 serves as the Snappy uncompressed-length prefix (identical to what Snappy's own format specifies), and the remaining bytes are Snappy compressed elements (literal runs and copy/back-reference commands).
 
 To decompress: pass `block_data[1:]` (everything after the `0x0A` marker) to a Snappy raw-block decompressor (e.g., `cramjam.snappy.decompress_raw()` in Python, or `snap::raw::Decoder` in Rust).
 
-**Compression status: CONFIRMED — Google Snappy (raw block format).** Verified on all 65 type=0x02 blocks in the corpus. Zero decompression failures. Overall compression ratio: 0.374 (62.6% reduction). Individual ratios range from 0.17× (Day06, highly repetitive grid data) to 1.04× (very small files where Snappy adds slight overhead).
+**Compression status: CONFIRMED - Google Snappy (raw block format).** Verified on all 65 type=0x02 blocks in the corpus. Zero decompression failures. Overall compression ratio: 0.374 (62.6% reduction). Individual ratios range from 0.17× (Day06, highly repetitive grid data) to 1.04× (very small files where Snappy adds slight overhead).
 
 Snappy element types observed in E2 data:
-- **Literal** (`tag & 3 == 0`): most common for initial record data; uses standard Snappy literal-length encoding (inline for ≤60 bytes, extended 1–4 byte length for larger runs)
-- **Copy-1** (`tag & 3 == 1`): 2-byte back-reference, match length 4–11, offset 0–2047; used for short repeated strings like `"Register "`
-- **Copy-2** (`tag & 3 == 2`): 3-byte back-reference, match length 1–64, offset 0–65535; observed in larger files
+- **Literal** (`tag & 3 == 0`): most common for initial record data; uses standard Snappy literal-length encoding (inline for ≤60 bytes, extended 1-4 byte length for larger runs)
+- **Copy-1** (`tag & 3 == 1`): 2-byte back-reference, match length 4-11, offset 0-2047; used for short repeated strings like `"Register "`
+- **Copy-2** (`tag & 3 == 2`): 3-byte back-reference, match length 1-64, offset 0-65535; observed in larger files
 - **Copy-4** (`tag & 3 == 3`): 5-byte back-reference; not yet observed but supported by Snappy spec
 
 #### Block Internal Structure (type `0x01`)
@@ -106,11 +106,11 @@ Type `0x01` blocks store **large binary/string data** (blob blocks). Used when V
 
 | Offset | Size | Type | Content |
 |--------|------|------|---------|
-| 0 | 4 | u32 LE | **Block size** — byte count of the 0x0A marker + Snappy data that follows (does NOT include the uncompressed_size or hash fields) |
-| 4 | 4 | u32 LE | **Uncompressed size** — total decompressed byte count |
-| 8 | 16 | bytes | **Integrity hash** (possibly MD5) — 16-byte value |
-| 24 | 1 | byte | Constant `0x0A` — Snappy marker (same as type 0x02) |
-| 25 | varies | bytes | **Snappy raw data** — varint(uncompressed_size) + Snappy commands |
+| 0 | 4 | u32 LE | **Block size** - byte count of the 0x0A marker + Snappy data that follows (does NOT include the uncompressed_size or hash fields) |
+| 4 | 4 | u32 LE | **Uncompressed size** - total decompressed byte count |
+| 8 | 16 | bytes | **Integrity hash** (possibly MD5) - 16-byte value |
+| 24 | 1 | byte | Constant `0x0A` - Snappy marker (same as type 0x02) |
+| 25 | varies | bytes | **Snappy raw data** - varint(uncompressed_size) + Snappy commands |
 
 **Total bytes consumed from file:** `5 + 4 + 16 + block_size` = `25 + block_size` bytes (1 type byte + 4 block_size + 4 uncompressed_size + 16 hash + block_size Snappy data).
 
@@ -120,7 +120,7 @@ The decompressed content is the **raw value data** (e.g., PNG image, UTF-8 text,
 
 **Companion type 0x02 block:** When a file uses type 0x01 blob blocks, a type 0x02 block follows containing the record structure. The decompressed block header (inner_size, first_rec_size) may have **bit 31 set** (0x80000000 flag) to indicate the record references external blob data. Inter-record size prefixes within the decompressed block also have bit 31 set when the record contains blob references. Variable-length fields that reference blob data use type-specific blob reference prefixes (`0x11` for strings, `0x12` for Blob, `0x13` for SpatialObj) followed by 8 bytes. See [Variable-Length Field Prefix Table](#variable-length-field-prefix-table).
 
-**Verified:** Day12's 37,048-byte V_WString blob. Blood cell file with 15 type 0x01 blocks (PNG images, 84K–290K each). Loan file with 1 type 0x01 block (1.3 MB R model). Maine Counties with 15 type 0x01 blocks (SpatialObj polygons, 18K–372K each). Gulf of Maine with 1 type 0x01 block (461K SpatialObj MultiPolygon).
+**Verified:** Day12's 37,048-byte V_WString blob. Blood cell file with 15 type 0x01 blocks (PNG images, 84K-290K each). Loan file with 1 type 0x01 block (1.3 MB R model). Maine Counties with 15 type 0x01 blocks (SpatialObj polygons, 18K-372K each). Gulf of Maine with 1 type 0x01 block (461K SpatialObj MultiPolygon).
 
 #### Decompressed Block Content
 
@@ -129,9 +129,9 @@ After Snappy decompression, the block content has this structure:
 | Offset | Size | Type | Content | Status |
 |--------|------|------|---------|--------|
 | 0 | 4 | u32 LE | `inner_size` = decompressed_length − 8. Bit 31 may be set (0x80000000 flag) to indicate the block references external blob data from a type 0x01 block. | **CONFIRMED** (all 65 files) |
-| 4 | 4 | u32 LE | **Record count** — number of records in this block | **CONFIRMED** |
-| 8 | 4 | u32 LE | **First record size** — byte length of the first record in this block | **CONFIRMED** |
-| 12 | varies | bytes | **Record data** — variable-length record bytes, framed with inter-record size prefixes | **CONFIRMED** |
+| 4 | 4 | u32 LE | **Record count** - number of records in this block | **CONFIRMED** |
+| 8 | 4 | u32 LE | **First record size** - byte length of the first record in this block | **CONFIRMED** |
+| 12 | varies | bytes | **Record data** - variable-length record bytes, framed with inter-record size prefixes | **CONFIRMED** |
 
 Relationships (all 65 files):
 - `inner_size` = `snappy_uncompressed_length` − 8 (always)
@@ -155,7 +155,7 @@ The first record's size comes from the block header field (offset 8). Each subse
 
 #### Field Encoding
 
-Fields are encoded contiguously within each record, in the order specified by the XML metadata. E2 uses **compact variable-length encoding** for all field types — small values use fewer bytes than large values.
+Fields are encoded contiguously within each record, in the order specified by the XML metadata. E2 uses **compact variable-length encoding** for all field types - small values use fewer bytes than large values.
 
 ##### Bool
 
@@ -176,13 +176,13 @@ Bool does NOT use compact integer encoding. It is always exactly 1 byte.
 | Prefix | Value Bytes | Range | Notes |
 |--------|-------------|-------|-------|
 | `0x06` | 0 | Value = 0 | Zero stored with no data bytes |
-| `0x07` | 1 | 0–255 | Single byte |
-| `0x08` | 2 | 0–65,535 | |
-| `0x09` | 3 | 0–16,777,215 | |
+| `0x07` | 1 | 0-255 | Single byte |
+| `0x08` | 2 | 0-65,535 | |
+| `0x09` | 3 | 0-16,777,215 | |
 | `0x0A` | 4 | Full Int32 range | |
-| `0x0B`–`0x0E` | 5–8 | Int64 range | For Int64 only |
+| `0x0B`-`0x0E` | 5-8 | Int64 range | For Int64 only |
 
-A value is stored using the **minimum number of bytes** — leading zero bytes (in LE, these are trailing high bytes) are stripped. Example: value 1 = prefix `0x07` + byte `0x01` (2 bytes total). Value 9999 = prefix `0x08` + bytes `0x0F 0x27` (3 bytes total).
+A value is stored using the **minimum number of bytes** - leading zero bytes (in LE, these are trailing high bytes) are stripped. Example: value 1 = prefix `0x07` + byte `0x01` (2 bytes total). Value 9999 = prefix `0x08` + bytes `0x0F 0x27` (3 bytes total).
 
 **Base variant (base=5).** Some files use **base 5** instead of base 6 for integer types. In these files, the prefix formula becomes P − 5 value bytes. Values tend to use **fixed-width encoding** (always 4 data bytes for Int32, prefix `0x09`), rather than minimum-byte encoding. The base variant applies uniformly to all integer types within a file. There is no known header flag that distinguishes the two variants; decoders must auto-detect by trying both bases on sample records and selecting whichever produces more valid decodes. Verified across 26 dragnet files: 11 use base=5, 7 use base=6 for Int32.
 
@@ -200,13 +200,13 @@ Variable-length, length-prefixed UTF-8:
 |--------|---------|
 | `0x00` | Null (below-base null for default/non-nullable fields) |
 | `0x01` + u16 LE length | Long string (>127 bytes). u16 gives byte count of UTF-8 data that follows. |
-| `0x11` + 8 bytes | Blob reference — value is stored in a preceding type 0x01 block. See [Block Type 0x01](#block-internal-structure-type-0x01). |
+| `0x11` + 8 bytes | Blob reference - value is stored in a preceding type 0x01 block. See [Block Type 0x01](#block-internal-structure-type-0x01). |
 | `0x41` | Null (type-specific null byte; see [Type-Specific Null Bytes](#type-specific-null-bytes)) |
 | `0x80 \| len` | Short string (≤127 bytes). Low 7 bits = byte count of UTF-8 data that follows. |
 
 Example: `0x83 41 4E 44` = string "AND" (prefix `0x83` = 3 bytes, then "AND" in UTF-8).
 
-**CRITICAL: V_WString encoding in E2 is UTF-8, NOT UTF-16LE.** Both V_String and V_WString use UTF-8 with char_width=1 in E2. The length prefix gives the byte count directly (no ×2 multiplication). This differs from E1 where V_WString uses UTF-16LE (char_width=2). Confirmed by: verified round-trip parsing of all tested files — both V_String and V_WString decode identically as UTF-8.
+**CRITICAL: V_WString encoding in E2 is UTF-8, NOT UTF-16LE.** Both V_String and V_WString use UTF-8 with char_width=1 in E2. The length prefix gives the byte count directly (no ×2 multiplication). This differs from E1 where V_WString uses UTF-16LE (char_width=2). Confirmed by: verified round-trip parsing of all tested files - both V_String and V_WString decode identically as UTF-8.
 
 **Verified:** Exact round-trip on all tested records across 65 files. Both V_String and V_WString are encoded identically (UTF-8, char_width=1).
 
@@ -216,7 +216,7 @@ Example: `0x83 41 4E 44` = string "AND" (prefix `0x83` = 3 bytes, then "AND" in 
 
 | Prefix | Value Bytes | Meaning |
 |--------|-------------|--------|
-| `0x00`–`0x06` | 0 | Null (below-base) |
+| `0x00`-`0x06` | 0 | Null (below-base) |
 | `0x07` | 0 | Value = 0.0 |
 | `0x08` | 1 | 1 byte of IEEE 754 |
 | `0x09` | 2 | 2 bytes |
@@ -236,15 +236,15 @@ Example: ICD code 715.97 → IEEE 754 = `0x4433F1EC` → LE bytes `EC F1 33 44` 
 
 | Prefix | Value Bytes | Meaning |
 |--------|-------------|--------|
-| `0x00`–`0x05` | 0 | Null (below zero prefix) |
+| `0x00`-`0x05` | 0 | Null (below zero prefix) |
 | `0x06` | 0 | Value = 0.0 (special zero, no data bytes) |
-| `0x07`–`0x0C` | 3–8 | n = P − 4 data bytes of IEEE 754 LE double |
+| `0x07`-`0x0C` | 3-8 | n = P − 4 data bytes of IEEE 754 LE double |
 | `0x48` | 0 | Null (type-specific null byte) |
 | `0x4C` | 0 | Null (alternate null code, observed in Airport data) |
 
-**Zero encoding anomaly:** The zero prefix is `0x06`, not `0x04` as the base-4 formula would predict. This means the formula n = P − 4 gives n = 2 for prefix `0x06`, but the actual encoding stores **zero data bytes** — the value 0.0 is implicit. The decoder must special-case prefix `0x06` as zero. Prefixes `0x04` and `0x05` are null, not zero or 1-byte.
+**Zero encoding anomaly:** The zero prefix is `0x06`, not `0x04` as the base-4 formula would predict. This means the formula n = P − 4 gives n = 2 for prefix `0x06`, but the actual encoding stores **zero data bytes** - the value 0.0 is implicit. The decoder must special-case prefix `0x06` as zero. Prefixes `0x04` and `0x05` are null, not zero or 1-byte.
 
-**In practice, only three prefix values occur:** `0x06` (zero), `0x0C` (full 8-byte double), and null codes (`0x48`, `0x4C`, or below `0x06`). The encoder always stores the complete 8-byte IEEE 754 representation for non-zero values — intermediate sizes (3–7 bytes via prefixes `0x07`–`0x0B`) have not been observed, because the exponent byte of any normal double is always non-zero, preventing trailing-zero stripping.
+**In practice, only three prefix values occur:** `0x06` (zero), `0x0C` (full 8-byte double), and null codes (`0x48`, `0x4C`, or below `0x06`). The encoder always stores the complete 8-byte IEEE 754 representation for non-zero values - intermediate sizes (3-7 bytes via prefixes `0x07`-`0x0B`) have not been observed, because the exponent byte of any normal double is always non-zero, preventing trailing-zero stripping.
 
 To reconstruct: pad the stored bytes with trailing zero bytes to 8 bytes, then interpret as `f64 LE`.
 
@@ -258,7 +258,7 @@ Example: population 33,756,000.0 → IEEE 754 = `0x4180168000000000` → LE byte
 
 | Prefix | Value Bytes | Meaning |
 |--------|-------------|--------|
-| `0x00`–`0x09` | 0 | Null (below-base) |
+| `0x00`-`0x09` | 0 | Null (below-base) |
 | `0x0A` | 0 | Value = day 0 (1899-12-30) |
 | `0x0B` | 1 | 1 value byte |
 | `0x0C` | 2 | 2 value bytes |
@@ -268,7 +268,7 @@ Example: population 33,756,000.0 → IEEE 754 = `0x4180168000000000` → LE byte
 
 The value bytes encode the date serial number in little-endian. Example: 2016-09-05 = day 42618 → `0x0D 8A A6 00` (prefix + 3 bytes). Day serial 42618 = 0x00A68A.
 
-**Date flag byte:** A single `0x00` byte appears **before the first Date-typed field** in each record, in **some** files that contain Date fields. This flag is present once per record (before the first Date field only, regardless of how many Date fields exist). **Not present** in files without Date fields, and **not present** in all files with Date fields — the CityBike file (which has both DateTime and Date fields) does NOT have a date flag byte. The flag's presence may depend on the Alteryx version or workflow configuration. Decoders should auto-detect by sampling records with both interpretations.
+**Date flag byte:** A single `0x00` byte appears **before the first Date-typed field** in each record, in **some** files that contain Date fields. This flag is present once per record (before the first Date field only, regardless of how many Date fields exist). **Not present** in files without Date fields, and **not present** in all files with Date fields - the CityBike file (which has both DateTime and Date fields) does NOT have a date flag byte. The flag's presence may depend on the Alteryx version or workflow configuration. Decoders should auto-detect by sampling records with both interpretations.
 
 **Verified:** Zero-error round-trip on all Date values in 3 healthcare files (23,103 records, with date flag) and CityBike (56,164 records, without date flag).
 
@@ -278,14 +278,14 @@ The value bytes encode the date serial number in little-endian. Example: 2016-09
 
 | Prefix | Value Bytes | Meaning |
 |--------|-------------|--------|
-| `0x00`–`0x07` | 0 | Null (below-base) |
+| `0x00`-`0x07` | 0 | Null (below-base) |
 | `0x08` | 0 | Value = zero datetime |
-| `0x09`–`0x0E` | 1–6 | n = P − 8 data bytes |
+| `0x09`-`0x0E` | 1-6 | n = P − 8 data bytes |
 | `0x4E` | 0 | Null (type-specific null byte) |
 
 **Value interpretation:** The 6-byte value (u48 LE) encodes:
-- Bits 0–23 (lower 3 bytes): centiseconds since midnight (0–8,639,999). 1 centisecond = 10 ms.
-- Bits 24–47 (upper 3 bytes): day serial number, days since 1899-12-30 (OLE epoch), same numbering as Date fields.
+- Bits 0-23 (lower 3 bytes): centiseconds since midnight (0-8,639,999). 1 centisecond = 10 ms.
+- Bits 24-47 (upper 3 bytes): day serial number, days since 1899-12-30 (OLE epoch), same numbering as Date fields.
 
 To decode:
 ```
@@ -315,18 +315,18 @@ Not observed in corpus. Predicted: base 12, type-specific null byte `0x4F`. The 
 
 ##### Byte
 
-**Compact prefix encoding with base 6.** Identical to Int16/Int32/Int64 encoding. A prefix byte P is followed by (P − 6) value bytes in LE. Since Byte values are 0–255, only prefix `0x06` (zero) and `0x07` (1 byte) are used in practice.
+**Compact prefix encoding with base 6.** Identical to Int16/Int32/Int64 encoding. A prefix byte P is followed by (P − 6) value bytes in LE. Since Byte values are 0-255, only prefix `0x06` (zero) and `0x07` (1 byte) are used in practice.
 
 | Prefix | Value Bytes | Meaning |
 |--------|-------------|--------|
-| `0x00`–`0x05` | 0 | Null (below-base) |
+| `0x00`-`0x05` | 0 | Null (below-base) |
 | `0x06` | 0 | Value = 0 |
-| `0x07` | 1 | 1 data byte (0–255) |
+| `0x07` | 1 | 1 data byte (0-255) |
 | `0x47` | 0 | Null (type-specific, 0x40 + type code 7) |
 
 **IMPORTANT: Byte always uses base=6, even in files where Int32 uses the base=5 variant.** The base=5 variant does NOT apply to Byte.
 
-**Verified:** Zero-error round-trip on 10,002 Byte field values across 3 files (EPL 2018: 21 records × 1 Byte field, Top 3 Players: 9 records × 1 Byte field, Golf Hole Difficulty: 4,986 records × 2 Byte fields). All values decoded correctly: ages 21–30 for football players, holes 1–18 and pars 3–5 for golf data.
+**Verified:** Zero-error round-trip on 10,002 Byte field values across 3 files (EPL 2018: 21 records × 1 Byte field, Top 3 Players: 9 records × 1 Byte field, Golf Hole Difficulty: 4,986 records × 2 Byte fields). All values decoded correctly: ages 21-30 for football players, holes 1-18 and pars 3-5 for golf data.
 
 ##### Blob
 
@@ -338,11 +338,11 @@ Not observed in corpus. Predicted: base 12, type-specific null byte `0x4F`. The 
 | `0x41` | Null (type-specific) |
 | `0x80 \| len` | Short inline (≤127 bytes) |
 | `0x02` + u16 LE length | Long inline (≤65,535 bytes). u16 gives byte count of data that follows. |
-| `0x12` + u64 LE file offset | Blob reference — value stored in a type 0x01 block at the given absolute file offset. The entire decompressed block content is the blob value (length is implicit from the block's uncompressed_size). |
+| `0x12` + u64 LE file offset | Blob reference - value stored in a type 0x01 block at the given absolute file offset. The entire decompressed block content is the blob value (length is implicit from the block's uncompressed_size). |
 
 **Inline vs out-of-line threshold:** Blobs ≤65,535 bytes are stored inline using `0x02` + u16. Larger blobs are stored in dedicated type 0x01 blocks (one blob per block, 1:1 mapping) and referenced by file offset using `0x12` + u64.
 
-**Verified:** Zero-error decoding of 25 Blob values: blood cell file (12 records × 2 Blob fields: 15 out-of-line PNG images 84K–290K via `0x12`, 9 inline PNG images 16K–23K via `0x02`), loan file (1 record × 1 Blob field: 1.3 MB R serialized model via `0x12`).
+**Verified:** Zero-error decoding of 25 Blob values: blood cell file (12 records × 2 Blob fields: 15 out-of-line PNG images 84K-290K via `0x12`, 9 inline PNG images 16K-23K via `0x02`), loan file (1 record × 1 Blob field: 1.3 MB R serialized model via `0x12`).
 
 ##### SpatialObj
 
@@ -354,12 +354,12 @@ Not observed in corpus. Predicted: base 12, type-specific null byte `0x4F`. The 
 | `0x43` | Null (type-specific, predicted) |
 | `0x80 \| len` | Short inline (≤127 bytes, predicted) |
 | `0x03` + u16 LE length | Long inline (≤65,535 bytes). u16 gives byte count of spatial data that follows. |
-| `0x13` + u64 LE file offset | Blob reference — spatial data stored in a type 0x01 block at the given absolute file offset. |
+| `0x13` + u64 LE file offset | Blob reference - spatial data stored in a type 0x01 block at the given absolute file offset. |
 
 **Spatial binary format:** The inline/blob data is an ESRI Shapefile geometry record (same format used in E1's SpatialObj), NOT OGC WKB. Observed geometry types:
 
-- **Point (type code 1):** 20 bytes — `u32 type(1) + f64 x + f64 y` (no bounding box)
-- **Polygon/MultiPolygon (type code 5):** 44 + parts×4 + points×16 bytes — `u32 type(5) + f64 bbox[4] + u32 num_parts + u32 num_points + u32[] part_indices + [f64 x, f64 y][] points`
+- **Point (type code 1):** 20 bytes - `u32 type(1) + f64 x + f64 y` (no bounding box)
+- **Polygon/MultiPolygon (type code 5):** 44 + parts×4 + points×16 bytes - `u32 type(5) + f64 bbox[4] + u32 num_parts + u32 num_points + u32[] part_indices + [f64 x, f64 y][] points`
 
 **Records containing blob references:** When a record references out-of-line blob data, bit 31 (0x80000000) is set on both the `inner_size` field in the decompressed block header AND on each inter-record size prefix for records containing references.
 
@@ -386,20 +386,20 @@ The 8-byte blob reference payload differs by context:
 
 Files containing SpatialObj fields include additional block types for spatial indexing:
 
-**Type 0x03 — Per-block spatial index:**
+**Type 0x03 - Per-block spatial index:**
 Appears after each type 0x02 record block in files with SpatialObj fields. Contains a spatial index covering the records in the preceding block.
 
 | Offset | Size | Type | Content |
 |--------|------|------|---------|
 | 0 | 1 | byte | Block type = `0x03` |
-| 1 | 4 | u32 LE | **Block size** — byte count of the data that follows |
+| 1 | 4 | u32 LE | **Block size** - byte count of the data that follows |
 | 5 | 4 | u32 LE | **Inner size** (purpose TBD) |
-| 9 | 1 | byte | Constant `0x0A` — Snappy marker |
+| 9 | 1 | byte | Constant `0x0A` - Snappy marker |
 | 10 | varies | bytes | Snappy-compressed spatial index data |
 
 **NOTE:** The Snappy data extends 4 bytes past the declared block size. Decoders must read `block_size + 4` bytes of data after the block size field.
 
-**Type 0x04 — Global spatial index:**
+**Type 0x04 - Global spatial index:**
 Appears once per file, after all type 0x02/0x03 block pairs. Contains a file-level spatial index.
 
 Layout identical to type 0x03.
@@ -421,7 +421,7 @@ Layout identical to type 0x03.
 |------|------|-------------|
 | 0 | Marker | `0x04` = non-null value; `0x4C` = null; `0x00` = null |
 | 1 | Prefix | Determines data byte count and significant digit count |
-| 2 | Sign+Scale | Bit 7 = sign (0=positive, 1=negative), bits 0–6 = scale (decimal places) |
+| 2 | Sign+Scale | Bit 7 = sign (0=positive, 1=negative), bits 0-6 = scale (decimal places) |
 | 3.. | BCD data | Packed BCD: each byte = 2 decimal digits (high nibble first) |
 
 **Data byte count** = `(prefix // 2) + 1`
@@ -450,7 +450,7 @@ actual_value = integer_value / 10^scale * (-1 if is_negative else 1)
 | `04 08 06 13 00 00 00 00` | 8 | +, scale=6 | `13 00 00 00 00` | 9 → "130000000" | 130000000 | 6 | 130.0 |
 | `04 09 06 24 25 00 00 00` | 9 | +, scale=6 | `24 25 00 00 00` | 10 → "2425000000" | 2425000000 | 6 | 2425.0 |
 | `04 01 80 24` | 1 | −, scale=0 | `24` | 2 → "24" | 24 | 0 | −24 |
-| `4C` | — | — | — | — | — | — | NULL |
+| `4C` | - | - | - | - | - | - | NULL |
 
 **The scale value in each encoded field matches the `scale` attribute from the XML metadata** for that field. For example, a field declared `type="FixedDecimal" scale="6" size="19"` always has sign_scale byte = `0x06` (positive) or `0x86` (negative) in the encoded data.
 
@@ -490,7 +490,7 @@ Both null mechanisms coexist: a decoder must check for the type-specific null by
 
 | Offset from EOF | Size | Content | Status |
 |-----------------|------|---------|--------|
-| −4 | 4 | ASCII `"YXE2"` — footer magic | **CONFIRMED** |
+| −4 | 4 | ASCII `"YXE2"` - footer magic | **CONFIRMED** |
 | −48 to −5 | 44 | Footer metadata + magic (see below) | **CONFIRMED** |
 | −48 to −41 | 8 | Sentinel: `FF FF FF FF FF FF FF FF` (8 bytes of 0xFF) | **CONFIRMED** |
 
@@ -500,10 +500,10 @@ Footer field analysis (40-byte footer = 8 sentinel + 28 metadata + 4 magic):
 
 ```
 Sentinel:  FF FF FF FF FF FF FF FF     (8 bytes, constant)
-Field A:   xx xx xx xx 00 00 00 00     (u64 LE — file offset; see below)
-Field B:   xx xx xx xx xx xx xx xx     (u64 LE — varies per file)
-Field C:   00 00 00 00                 (u32 LE — always 0 or small number)
-Field D:   xx xx xx xx 00 00 00 00     (u64 LE — varies per file)
+Field A:   xx xx xx xx 00 00 00 00     (u64 LE - file offset; see below)
+Field B:   xx xx xx xx xx xx xx xx     (u64 LE - varies per file)
+Field C:   00 00 00 00                 (u32 LE - always 0 or small number)
+Field D:   xx xx xx xx 00 00 00 00     (u64 LE - varies per file)
 Magic:     59 58 45 32                 ("YXE2")
 ```
 
@@ -512,8 +512,8 @@ Magic:     59 58 45 32                 ("YXE2")
 - For Day12 (type 0x01 + 0x02): Field A = 16851 = offset of the type 0x02 companion block within the file
 
 **Footer record counts observed:**
-- Day09: (496, 0, **19999**, 1, 0, **19999**, 0) — nrec=19999 appears at positions 3 and 6
-- Day12: (16851, 0, **1**, 1, 0, **1**, 0) — nrec=1
+- Day09: (496, 0, **19999**, 1, 0, **19999**, 0) - nrec=19999 appears at positions 3 and 6
+- Day12: (16851, 0, **1**, 1, 0, **1**, 0) - nrec=1
 
 ## What We Need
 
@@ -526,21 +526,21 @@ An E2 `.yxdb` file must be obtained under strict sourcing rules to avoid legal r
 - Alteryx Designer (generating files)
 - Alteryx Community (community.alteryx.com)
 - Any Alteryx-controlled repository, forum, download, or documentation
-- Any file created *for the purpose of* assisting this project by someone bound by the Alteryx EULA (this constitutes tortious interference with a contractual relationship — see legal notes)
+- Any file created *for the purpose of* assisting this project by someone bound by the Alteryx EULA (this constitutes tortious interference with a contractual relationship - see legal notes)
 - Any file solicited, requested, or hinted at by a project contributor or maintainer
 
 **Acceptable sources:**
 
 - `.yxdb` files already existing on the public internet for an independent purpose (not Alteryx properties)
-- Files discovered at arm's length — the producer must have no involvement with SigilYX
+- Files discovered at arm's length - the producer must have no involvement with SigilYX
 
 **Sourcing requirements:**
 
 - The source must be verifiably independent of the SigilYX project
 - A reasonable good-faith effort must be made to confirm the file was not produced in breach of any EULA
 - If a file is later found to be improperly sourced, it must be immediately removed and any spec work derived solely from it must be quarantined and re-validated
-- **Sourced files must never be committed to source control.** They are used for local binary analysis only. Once the E2 writer is verified, we generate our own test assets from scratch using SigilYX itself — those generated files are what get committed.
-- Even if a sourced file carries a permissive license (MIT, CC BY-SA 4.0, etc.), it should still not be committed — the goal is to have a test corpus that is entirely self-generated.
+- **Sourced files must never be committed to source control.** They are used for local binary analysis only. Once the E2 writer is verified, we generate our own test assets from scratch using SigilYX itself - those generated files are what get committed.
+- Even if a sourced file carries a permissive license (MIT, CC BY-SA 4.0, etc.), it should still not be committed - the goal is to have a test corpus that is entirely self-generated.
 - **Sources must be archived before use.** If the file originates from a GitHub repository, submit it to the [Software Heritage Foundation](https://www.softwareheritage.org/save-and-share/) (save-and-share). If it originates elsewhere on the open internet, archive the source page via [archive.org](https://web.archive.org/save). Record the archive URL in the provenance log. We do not host the assets; we maintain a permanent, auditable record of where to download them from.
 
 ### 2. Document Provenance
@@ -548,12 +548,12 @@ An E2 `.yxdb` file must be obtained under strict sourcing rules to avoid legal r
 For every E2 file used in spec development:
 
 - **Source URL or description** of how the file was obtained
-- **Archive URL** — Software Heritage permalink (for GitHub sources) or archive.org snapshot URL (for other web sources), created before analysis began
+- **Archive URL** - Software Heritage permalink (for GitHub sources) or archive.org snapshot URL (for other web sources), created before analysis began
 - **Date obtained**
 - **SHA-256 hash** (minimum) of the original file
 - **File size** in bytes
-- **Independence attestation** — confirmation that the source has no relationship to the SigilYX project
-- **EULA status** — to the best of our knowledge, was the file produced in violation of any EULA? (must be "no" or "unknown — no evidence of violation")
+- **Independence attestation** - confirmation that the source has no relationship to the SigilYX project
+- **EULA status** - to the best of our knowledge, was the file produced in violation of any EULA? (must be "no" or "unknown - no evidence of violation")
 - Any known metadata (field count, record count, Alteryx version that produced it, etc.)
 
 ### 3. Binary Analysis
@@ -602,15 +602,15 @@ Unlike E1, there will be **no performance benchmarks** for E2. There are no othe
 
 *Added: March 16, 2026. Gap analysis to determine what is implementation-ready vs what remains unresolved.*
 
-### Tier 1 — Confirmed
+### Tier 1 - Confirmed
 
 Every encoding below was verified against real E2 files with zero-error round-trips across the full corpus.
 
 | Feature | Evidence | Records Verified |
 |---------|----------|-----------------|
-| Header (100 bytes) | All 67 files | — |
-| XML metadata (UTF-8) | All 67 files | — |
-| Block type 0x02 (Snappy raw) | 65 blocks across 67 files | — |
+| Header (100 bytes) | All 67 files | - |
+| XML metadata (UTF-8) | All 67 files | - |
+| Block type 0x02 (Snappy raw) | 65 blocks across 67 files | - |
 | Record framing (u32 LE size prefixes) | All decompressed blocks | 112,345 |
 | Bool (0x14=false, 0x15=true) | AoC files | corpus-wide |
 | Int16 (compact base 6) | AoC files | corpus-wide |
@@ -625,7 +625,7 @@ Every encoding below was verified against real E2 files with zero-error round-tr
 | Date flag byte (0x00 before first Date field) | 3 healthcare files | 23,103 |
 | Double encoding (base 4, zero at 0x06, 8-byte IEEE 754) | 3 files | 66,218 |
 | DateTime encoding (base 8, packed day serial + centiseconds) | 1 file (CityBike) | 56,164 |
-| Footer basic structure (sentinel + 28 bytes + YXE2) | All 67 files | — |
+| Footer basic structure (sentinel + 28 bytes + YXE2) | All 67 files | - |
 | Block type 0x01 (blob: 20-byte header + Snappy) | 1 file (Day12) | 1 block |
 
 **These cover all field types actually present in the corpus: Bool, Int16, Int32, Int64, Float, Double, Date, DateTime, V_String, V_WString, String, FixedDecimal.** This is a practical superset of what most Alteryx workflows produce.
@@ -636,10 +636,10 @@ Every encoding below was verified against real E2 files with zero-error round-tr
 | Byte (compact base 6, same as Int16/Int32/Int64) | 3 files (EPL, Top 3 Players, Golf Hole Difficulty) | 10,002 values |
 | Blob (inline 0x02+u16, blob ref 0x12+u64 file offset) | 2 files (blood cell holdout, loan random forest) | 25 values |
 | SpatialObj (inline 0x03+u16, blob ref 0x13+u64 file offset) | 3 files (Gulf of Maine, Maine Counties, Tree Survey) | 200,017 values |
-| Block types 0x03, 0x04 (spatial index, skip-friendly) | 3 files with SpatialObj | — |
-| Type 0x01 block corrected size (25 + block_size bytes) | 33 blocks across 5 files | — |
+| Block types 0x03, 0x04 (spatial index, skip-friendly) | 3 files with SpatialObj | - |
+| Type 0x01 block corrected size (25 + block_size bytes) | 33 blocks across 5 files | - |
 
-### Tier 2 — High-Confidence Predictions
+### Tier 2 - High-Confidence Predictions
 
 These follow directly from confirmed patterns and are near-certain to be correct.
 
@@ -648,7 +648,7 @@ These follow directly from confirmed patterns and are near-certain to be correct
 | Null bytes: Bool=0x43, Int16=0x45, Byte=0x47, Time=0x4F | 0x40 + type_code | Pattern confirmed for 9 types (V_String, V_WString, Int32, Int64, Float, Double, Date, DateTime, FixedDecimal); arithmetic is unambiguous |
 | Negative integers | Full-width signed LE bytes (prefix = base + sizeof(type), e.g. Int32 −1 → `0x0A FF FF FF FF`) | Compact encoding strips leading zeros; negatives have 0xFF fill, so max prefix is expected |
 
-### Tier 3 — Medium-Confidence Predictions
+### Tier 3 - Medium-Confidence Predictions
 
 Pattern extrapolation is plausible but not certain.
 
@@ -656,7 +656,7 @@ Pattern extrapolation is plausible but not certain.
 |---------|-----------|------|
 | Time | Compact base 12 (0x0C), centiseconds since midnight (u24 LE, same as DateTime sub-day component) | Extrapolated from DateTime encoding. Base predicted from type code progression. |
 
-### Tier 4 — Unknown
+### Tier 4 - Unknown
 
 These have no observed samples and no reliable pattern to extrapolate from.
 
@@ -680,26 +680,26 @@ These have no observed samples and no reliable pattern to extrapolate from.
 
 ## Open Questions
 
-- ~~Does the E2 format use a columnar layout (more natural for AMP's parallel processing)?~~ — **Appears row-oriented.** Block data contains recognizable record-level data (field values adjacent to each other in a single row's order). Not columnar.
-- ~~Is E2 backward-compatible with E1 in any way (shared header, fallback)?~~ — **No shared header.** Completely different header structure (100 bytes vs 512, different magic, UTF-8 vs UTF-16, no record count in header). E1 and E2 files are interchangeable at the application level (both engines can read either format), but the binary layouts are entirely distinct.
-- ~~Are there sub-variants within E2 (e.g., different compression levels)?~~ — **Partially answered.** Block type `0x02` uses Snappy compression (confirmed). Block type `0x01` is a blob block (Snappy-compressed large values with a 20-byte header). Block type `0x00` is sentinel/empty. No evidence of multiple compression algorithms within the same block type.
-- What is the exact version/build where E2 first appeared? — **Not determinable from binary analysis alone.**
-- ~~**What compression algorithm is used?**~~ — **ANSWERED: Google Snappy (raw block format).** Confirmed by successful decompression of all 65 type=0x02 blocks using `cramjam.snappy.decompress_raw()`. The block starts with `0x0A` marker + LEB128 varint (Snappy uncompressed length) + Snappy payload. No custom modifications — standard Snappy.
-- ~~**What do the block header bytes encode?**~~ — **ANSWERED.** The `0x0A` marker + varint is the Snappy length prefix. What appeared to be "block header bytes" were the first bytes of the Snappy-decompressed content: 3×u32 LE fields (inner_size, record_count, field_3) followed by raw record data.
-- ~~**What is the footer metadata?**~~ — **PARTIALLY ANSWERED.** The 28 bytes between sentinel and `YXE2` magic contain at least: a file offset (Field A), and the total record count (appears twice in the 7×u32 structure). Full field semantics TBD for multi-block files.
-- ~~**What does `field_3` encode for multi-record blocks?**~~ — **ANSWERED: it's the byte size of the first record.** The record data uses variable-length framing where each subsequent record is preceded by a u32 LE size prefix. The first record's size is stored in the block header at offset 8.
-- ~~**How are Float/Date types encoded?**~~ — **ANSWERED.** Float uses compact prefix with base 7 (IEEE 754 LE with leading-zero stripping). Date uses compact prefix with base 0x0A (date serial = days since 1899-12-30). See field encoding sections.
-- ~~**How are nulls encoded?**~~ — **ANSWERED.** Two mechanisms: below-base prefix (prefix < base), and type-specific null bytes (0x40 + type_code). See [Type-Specific Null Bytes](#type-specific-null-bytes).
-- ~~**Bool true value?**~~ — **ANSWERED.** `0x15` = true, `0x14` = false.
+- ~~Does the E2 format use a columnar layout (more natural for AMP's parallel processing)?~~ - **Appears row-oriented.** Block data contains recognizable record-level data (field values adjacent to each other in a single row's order). Not columnar.
+- ~~Is E2 backward-compatible with E1 in any way (shared header, fallback)?~~ - **No shared header.** Completely different header structure (100 bytes vs 512, different magic, UTF-8 vs UTF-16, no record count in header). E1 and E2 files are interchangeable at the application level (both engines can read either format), but the binary layouts are entirely distinct.
+- ~~Are there sub-variants within E2 (e.g., different compression levels)?~~ - **Partially answered.** Block type `0x02` uses Snappy compression (confirmed). Block type `0x01` is a blob block (Snappy-compressed large values with a 20-byte header). Block type `0x00` is sentinel/empty. No evidence of multiple compression algorithms within the same block type.
+- What is the exact version/build where E2 first appeared? - **Not determinable from binary analysis alone.**
+- ~~**What compression algorithm is used?**~~ - **ANSWERED: Google Snappy (raw block format).** Confirmed by successful decompression of all 65 type=0x02 blocks using `cramjam.snappy.decompress_raw()`. The block starts with `0x0A` marker + LEB128 varint (Snappy uncompressed length) + Snappy payload. No custom modifications - standard Snappy.
+- ~~**What do the block header bytes encode?**~~ - **ANSWERED.** The `0x0A` marker + varint is the Snappy length prefix. What appeared to be "block header bytes" were the first bytes of the Snappy-decompressed content: 3×u32 LE fields (inner_size, record_count, field_3) followed by raw record data.
+- ~~**What is the footer metadata?**~~ - **PARTIALLY ANSWERED.** The 28 bytes between sentinel and `YXE2` magic contain at least: a file offset (Field A), and the total record count (appears twice in the 7×u32 structure). Full field semantics TBD for multi-block files.
+- ~~**What does `field_3` encode for multi-record blocks?**~~ - **ANSWERED: it's the byte size of the first record.** The record data uses variable-length framing where each subsequent record is preceded by a u32 LE size prefix. The first record's size is stored in the block header at offset 8.
+- ~~**How are Float/Date types encoded?**~~ - **ANSWERED.** Float uses compact prefix with base 7 (IEEE 754 LE with leading-zero stripping). Date uses compact prefix with base 0x0A (date serial = days since 1899-12-30). See field encoding sections.
+- ~~**How are nulls encoded?**~~ - **ANSWERED.** Two mechanisms: below-base prefix (prefix < base), and type-specific null bytes (0x40 + type_code). See [Type-Specific Null Bytes](#type-specific-null-bytes).
+- ~~**Bool true value?**~~ - **ANSWERED.** `0x15` = true, `0x14` = false.
 - **Date flag byte inconsistency:** The `0x00` flag byte before the first Date field was confirmed in 3 healthcare files but is ABSENT in CityBike (which has both DateTime and Date fields). The flag may be version-dependent or related to whether DateTime fields precede Date. Decoders must auto-detect by sampling.
 - **Negative integer encoding:** Not observed in corpus. Likely represented as full-width signed LE bytes (e.g., −1 as Int32 = `0x0A FF FF FF FF`).
-- ~~**Double encoding:**~~ — **ANSWERED.** Base 4, zero at 0x06, full 8-byte IEEE 754 for non-zero. See [Double](#double) section.
-- ~~**DateTime encoding:**~~ — **ANSWERED.** Base 8, packed u48 (day serial × 2^24 + centisecond of day). See [DateTime](#datetime) section.
-- ~~**FixedDecimal encoding:**~~ — **ANSWERED.** Packed BCD with embedded scale and sign. Marker byte `0x04`, prefix determines digit count, scale byte from metadata. See [FixedDecimal](#fixeddecimal) section.
-- ~~**String encoding:**~~ — **ANSWERED.** Identical to V_String (0x80|len for short, 0x01+u16 for long). See [String](#string) section.
+- ~~**Double encoding:**~~ - **ANSWERED.** Base 4, zero at 0x06, full 8-byte IEEE 754 for non-zero. See [Double](#double) section.
+- ~~**DateTime encoding:**~~ - **ANSWERED.** Base 8, packed u48 (day serial × 2^24 + centisecond of day). See [DateTime](#datetime) section.
+- ~~**FixedDecimal encoding:**~~ - **ANSWERED.** Packed BCD with embedded scale and sign. Marker byte `0x04`, prefix determines digit count, scale byte from metadata. See [FixedDecimal](#fixeddecimal) section.
+- ~~**String encoding:**~~ - **ANSWERED.** Identical to V_String (0x80|len for short, 0x01+u16 for long). See [String](#string) section.
 - **Time/WString encoding:** Not present in corpus. Predicted encodings documented but unverified.
 - ~~**Type 0x01 blob reference encoding:**~~ **ANSWERED.** Three reference prefixes confirmed: `0x11` (string, offset+length), `0x12` (blob, file offset), `0x13` (spatial, file offset). See [Variable-Length Field Prefix Table](#variable-length-field-prefix-table).
-- **Type 0x01 integrity hash:** The 16 bytes at offset 8–23 in the blob block header may be an MD5 hash. Purpose and verification TBD.
+- **Type 0x01 integrity hash:** The 16 bytes at offset 8-23 in the blob block header may be an MD5 hash. Purpose and verification TBD.
 - ~~**SpatialObj encoding:**~~ **ANSWERED.** Uses `0x03` + u16 for inline, `0x13` + u64 for blob reference. Binary data is ESRI Shapefile geometry records.
 - ~~**Blob encoding:**~~ **ANSWERED.** Uses `0x02` + u16 for inline, `0x12` + u64 for blob reference. File offset points to type 0x01 block.
 - ~~**Byte encoding:**~~ **ANSWERED.** Compact integer base=6, identical to Int16/Int32/Int64. Always uses base=6 even in base=5 variant files.
@@ -712,7 +712,7 @@ These have no observed samples and no reliable pattern to extrapolate from.
 
 Chronological record of binary analysis work, for auditability.
 
-### 2026-03-16 — Initial binary analysis session
+### 2026-03-16 - Initial binary analysis session
 
 **Corpus:** 67 E2 files assembled in `.untracked/e2-corpus/` (3 from Source A, 64 from Source B).
 
@@ -722,7 +722,7 @@ Chronological record of binary analysis work, for auditability.
 
 1. **Header structure identified.** The E2 header is 100 bytes (not 512). The magic string `"Alteryx e2 Database file"` was found by hex-dumping the first sourced E2 file. UTF-8 XML metadata begins at offset 100. The metadata size at offset 96 is in bytes (not UTF-16 code units). All 67 files share consistent header layout.
 
-2. **Constant `0x40000001` at offset 68.** Present in all 67 files. Purpose unknown — possibly a version number or feature flags (`0x40000001` = bit 30 set + bit 0 set).
+2. **Constant `0x40000001` at offset 68.** Present in all 67 files. Purpose unknown - possibly a version number or feature flags (`0x40000001` = bit 30 set + bit 0 set).
 
 3. **Footer `YXE2` identified.** Every file ends with ASCII `"YXE2"`. The full footer is 40 bytes for single-block files or 52 bytes for multi-block files (only 1 multi-block file in corpus: A1 Task1Output at 1.1 MB). The footer begins after an `FF FF FF FF FF FF FF FF` sentinel.
 
@@ -730,16 +730,16 @@ Chronological record of binary analysis work, for auditability.
 
 5. **Compression algorithm unidentified.** Tried: LZF (manual decoder), zstd (frame), LZ4 (block), Snappy. All failed. Block data contains recognizable ASCII fragments mixed with binary control bytes. The first ~16 bytes of each block appear to be a block-level header encoding sizes/offsets that shift proportionally with data content.
 
-6. **Not columnar.** Visible record data contains adjacent field values (e.g., a file path string followed immediately by a puzzle-input string — two fields from the same row), confirming row-oriented storage.
+6. **Not columnar.** Visible record data contains adjacent field values (e.g., a file path string followed immediately by a puzzle-input string - two fields from the same row), confirming row-oriented storage.
 
 **Next steps (from March 16):**
-- ~~Investigate the compression algorithm further~~ — **Resolved March 17: Snappy confirmed.**
-- ~~Decode the block-level header (first ~16 bytes of data blocks)~~ — **Resolved March 17: 0x0A + Snappy varint + inner u32s.**
+- ~~Investigate the compression algorithm further~~ - **Resolved March 17: Snappy confirmed.**
+- ~~Decode the block-level header (first ~16 bytes of data blocks)~~ - **Resolved March 17: 0x0A + Snappy varint + inner u32s.**
 - Decode the footer metadata (record count, block count)
 - Analyze the `0x01` block type (Day12 file)
 - Correlate footer fields with known file properties (record count, file size, block count)
 
-### 2026-03-17 — Compression breakthrough: Snappy confirmed
+### 2026-03-17 - Compression breakthrough: Snappy confirmed
 
 **Method:** Systematic binary comparison (`diff_compressed.py`), Snappy control byte pattern recognition, and programmatic decompression (`test_snappy2.py`, `verify_snappy_all.py`). All scripts stored in `.untracked/`.
 
@@ -749,8 +749,8 @@ Chronological record of binary analysis work, for auditability.
 
 2. **Snappy control byte identification.** The three back-reference bytes were: `15 15`, `15 0E`, `01 0E`. Analysis of the bit patterns revealed they match Google Snappy's copy-1 format exactly:
    - `tag & 3 == 1` → copy-1 (2-byte back-reference)
-   - `length = ((tag >> 2) & 7) + 4` → values 4–11
-   - `offset = ((tag >> 5) << 8) | next_byte` → values 0–2047
+   - `length = ((tag >> 2) & 7) + 4` → values 4-11
+   - `offset = ((tag >> 5) << 8) | next_byte` → values 0-2047
    - Verified: `0x15 0x15` → length=9, offset=21 (copies "Register " from 21 bytes back) ✓
    - Verified: `0x15 0x0E` → length=9, offset=14 ✓
    - Verified: `0x01 0x0E` → length=4, offset=14 ✓
@@ -766,7 +766,7 @@ Chronological record of binary analysis work, for auditability.
    - Data is row-oriented: all fields of one record appear contiguously.
    - All decompressed blocks begin with 12 bytes of inner metadata (3×u32 LE) before record data.
 
-**Key insight:** Earlier Snappy tests (March 16) failed because the Snappy data was tested at the wrong offset. The compressed data begins **after the `0x0A` marker byte** — passing `block_data[1:]` to Snappy decompression succeeds, while passing `block_data[0:]` (including the `0x0A`) fails. The `0x0A` byte is a format marker, not part of the Snappy stream.
+**Key insight:** Earlier Snappy tests (March 16) failed because the Snappy data was tested at the wrong offset. The compressed data begins **after the `0x0A` marker byte** - passing `block_data[1:]` to Snappy decompression succeeds, while passing `block_data[0:]` (including the `0x0A`) fails. The `0x0A` byte is a format marker, not part of the Snappy stream.
 
 **Compression statistics:**
 - Total compressed across corpus: 2,389,300 bytes
@@ -782,19 +782,19 @@ Chronological record of binary analysis work, for auditability.
 
 7. **Compact integer encoding.** Integer fields (Int32, Int64, Int16) use a prefix byte P where (P − 6) value bytes follow in little-endian. Small values like 0 take 1 byte (prefix only), value 1 takes 2 bytes, value 9999 takes 3 bytes. This provides significant space savings for data with small numeric values (e.g., sequential IDs, grid coordinates). Base prefix value is 0x06.
 
-8. **V_WString/V_String encoding confirmed.** Three prefix formats: `0x00` = null, `0x80|len` = short string (≤127 bytes UTF-8), `0x01 + u16 LE len` = long string (>127 bytes). V_WString and V_String are **both UTF-8** in E2 (char_width=1 for both). This differs from E1, where V_WString uses UTF-16LE. Correct char_width is essential for parsing — using char_width=2 for V_WString causes 100% parse failures on V_WString-containing files.
+8. **V_WString/V_String encoding confirmed.** Three prefix formats: `0x00` = null, `0x80|len` = short string (≤127 bytes UTF-8), `0x01 + u16 LE len` = long string (>127 bytes). V_WString and V_String are **both UTF-8** in E2 (char_width=1 for both). This differs from E1, where V_WString uses UTF-16LE. Correct char_width is essential for parsing - using char_width=2 for V_WString causes 100% parse failures on V_WString-containing files.
 
 9. **Bool encoding.** Single byte. `0x14` = false, `0x15` = true.
 
 **Open items:**
-- ~~Negative integer encoding (likely requires full byte width)~~ — Still unobserved; prediction documented.
-- ~~Null encoding for integers (prefix `0x05` or `0x04` suspected)~~ — **ANSWERED: below-base null (prefix < 6) and type-specific null byte (0x49 for Int32, 0x4A for Int64).**
-- ~~Float/Double/Date/DateTime encoding (observed in healthcare files but not yet decoded)~~ — **ANSWERED. See field encoding sections.**
-- ~~Bool true value~~ — **ANSWERED: 0x15.**
-- ~~Type `0x01` block format~~ — **PARTIALLY ANSWERED: blob block with 20-byte header + Snappy data. See analysis session 2026-03-18.**
-- Footer metadata field meanings — **PARTIALLY ANSWERED: Field A = file offset, record count at positions 3 and 6.**
+- ~~Negative integer encoding (likely requires full byte width)~~ - Still unobserved; prediction documented.
+- ~~Null encoding for integers (prefix `0x05` or `0x04` suspected)~~ - **ANSWERED: below-base null (prefix < 6) and type-specific null byte (0x49 for Int32, 0x4A for Int64).**
+- ~~Float/Double/Date/DateTime encoding (observed in healthcare files but not yet decoded)~~ - **ANSWERED. See field encoding sections.**
+- ~~Bool true value~~ - **ANSWERED: 0x15.**
+- ~~Type `0x01` block format~~ - **PARTIALLY ANSWERED: blob block with 20-byte header + Snappy data. See analysis session 2026-03-18.**
+- Footer metadata field meanings - **PARTIALLY ANSWERED: Field A = file offset, record count at positions 3 and 6.**
 
-### 2026-03-18 — Field encoding breakthrough: all types decoded
+### 2026-03-18 - Field encoding breakthrough: all types decoded
 
 **Corpus:** Same 67 E2 files. Analysis focused on 3 healthcare files from Source A (Task1, Task2, Task3) containing Float, Date, Int16, and nullable fields, plus all 64 Source B AoC files for cross-validation.
 
@@ -806,7 +806,7 @@ Chronological record of binary analysis work, for auditability.
 
 2. **Bool true value confirmed: `0x15`.** Found in Task3 records where SequenceNumber=2 (Readmitted?=true). Bool false = `0x14` (confirmed in prior session).
 
-3. **Date encoding confirmed (base 0x0A, date serial).** Compact prefix with base 10 (0x0A). Value = days since 1899-12-30 (OLE/Excel date epoch). Prefix 0x0D = 3 value bytes (common for dates in the 2015–2017 range, serial ~42000). Verified across all Date fields in 3 healthcare files.
+3. **Date encoding confirmed (base 0x0A, date serial).** Compact prefix with base 10 (0x0A). Value = days since 1899-12-30 (OLE/Excel date epoch). Prefix 0x0D = 3 value bytes (common for dates in the 2015-2017 range, serial ~42000). Verified across all Date fields in 3 healthcare files.
 
 4. **Date flag byte.** A `0x00` byte precedes the first Date-typed field in each record. This flag appears once per record (before the first Date only), regardless of how many Date fields exist. Without this flag byte, healthcare file records fail to parse (0% success). With the flag, Task2 and Task3 achieve 100% success. Not testable in AoC files (no Date fields).
 
@@ -816,7 +816,7 @@ Chronological record of binary analysis work, for auditability.
 
 7. **Corpus-wide parsing results:**
    - 64 of 65 type-0x02 files: **100% record parsing** (99,245 records total)
-   - 1 file (Task1): **13,100 of 13,101** records (99.992%) — 1 anomalous record (R4439) has byte 0x49 at an Int64 field position, possibly data corruption in the source file
+   - 1 file (Task1): **13,100 of 13,101** records (99.992%) - 1 anomalous record (R4439) has byte 0x49 at an Int64 field position, possibly data corruption in the source file
    - 2 files with no type-0x02 blocks: Day12 (type 0x01 blob), Day23_1 (0 records)
    - **Total: 112,345 / 112,346 records parsed = 99.9991%**
 
@@ -824,13 +824,13 @@ Chronological record of binary analysis work, for auditability.
 
 9. **Footer partial decode.** The 28-byte footer metadata (between 8×FF sentinel and "YXE2" magic) consists of 7 × u32 LE values. Field A (first u32 pair as u64) appears to be a file offset to the first/primary type 0x02 block. The record count appears at positions 3 and 6 of the 7 values.
 
-10. **Task1 extra field anomaly.** Task1 (healthcare file, 42 XML-declared fields) has an undocumented extra Int64 field between "Total Account Payment $" and "HRRP Condition" in 96.2% of records. This extra field is NOT in the XML metadata. Values are ~65517–65534 (compact int base 6) or null (0x4A). This appears to be a workflow artifact (possibly from the Alteryx blending tool), not a format-level feature. The adaptive parsing model (try extra Int64 first, fall back to no extra) achieves 13,100/13,101 records.
+10. **Task1 extra field anomaly.** Task1 (healthcare file, 42 XML-declared fields) has an undocumented extra Int64 field between "Total Account Payment $" and "HRRP Condition" in 96.2% of records. This extra field is NOT in the XML metadata. Values are ~65517-65534 (compact int base 6) or null (0x4A). This appears to be a workflow artifact (possibly from the Alteryx blending tool), not a format-level feature. The adaptive parsing model (try extra Int64 first, fall back to no extra) achieves 13,100/13,101 records.
 
 ---
 
-### 2026-03-18 — Dragnet corpus: FixedDecimal decoded, String confirmed, Int32 base variant identified
+### 2026-03-18 - Dragnet corpus: FixedDecimal decoded, String confirmed, Int32 base variant identified
 
-**Corpus expansion:** 26 additional E2 files sourced from 3 new repositories (Sources W–Y), bringing total to 144 E2 files across 26 sources. New files stored in `.untracked/e2-dragnet/`.
+**Corpus expansion:** 26 additional E2 files sourced from 3 new repositories (Sources W-Y), bringing total to 144 E2 files across 26 sources. New files stored in `.untracked/e2-dragnet/`.
 
 **Method:** Python scripts (stored in `.untracked/`). Key scripts: `hexdump_kumarritik.py`, `decode_kumarritik2.py`, `bruteforce_fd.py`, `validate_fd.py`, `test_all_dragnet.py`. All analysis performed on local copies of sourced files.
 
@@ -840,7 +840,7 @@ Chronological record of binary analysis work, for auditability.
    - Structure: `[0x04 marker][prefix byte][sign+scale byte][packed BCD data]`
    - Data byte count = `(prefix // 2) + 1`
    - Significant BCD digits = `prefix + 1` (only first N nibbles are meaningful; rest is zero padding)
-   - Scale byte bits: bit 7 = sign (0x80 = negative), bits 0–6 = scale value from XML metadata
+   - Scale byte bits: bit 7 = sign (0x80 = negative), bits 0-6 = scale value from XML metadata
    - Cross-validated: all 299 records satisfy `Profit = (SalePrice − CostPerItem) × Quantity` AND all 299 Profitability labels match threshold formula (`>2000→High, >1000→Avg, >0→Low, ≤0→Loss`)
    - Null encoding: `0x4C` (type-specific null byte, same as predicted)
    - One record (R4) has sign+scale byte `0x80` = negative sign + scale 0, confirming negative FixedDecimal encoding
@@ -851,18 +851,18 @@ Chronological record of binary analysis work, for auditability.
    - Int32 prefix `0x09` → n = 4 data bytes (always full-width, even for small values)
    - Int32 prefix `0x08` → n = 3 data bytes
    - Corpus split: 11 files use base=5, 7 files use base=6 (among files with integer fields)
-   - No distinguishing header flag found — file_id, flags field at offset 68, and block headers are all identical between variants
+   - No distinguishing header flag found - file_id, flags field at offset 68, and block headers are all identical between variants
    - Auto-detection strategy: try both bases on sample records, select whichever produces more valid decodes (analogous to existing date_flag auto-detection)
 
 4. **Date base confirmed as 10 across new corpus.** All 4 new files containing Date fields use compact int base=10 (0x0A), consistent with prior findings from healthcare files. Dates in kumarritik24 decode to 2023-era values (2023-02-09 through 2023-12-19), consistent with a recent sales optimization dataset.
 
 5. **Dragnet corpus validation results:**
    - 22/26 files: 100% clean decode (zero leftover bytes on all records)
-   - 1 file (EPL): 20/21 records clean (known edge case: record 6 has small Int32 value that doesn't round-trip with base=5, but base=6 gives 0% — file genuinely uses base=5 for most records)
+   - 1 file (EPL): 20/21 records clean (known edge case: record 6 has small Int32 value that doesn't round-trip with base=5, but base=6 gives 0% - file genuinely uses base=5 for most records)
    - 1 file: 0 records (empty file)
-   - 3 files (MOHAMMADALI230): block parsing error — possibly unusual block structure or corrupted source files, investigation deferred
+   - 3 files (MOHAMMADALI230): block parsing error - possibly unusual block structure or corrupted source files, investigation deferred
 
-### 2026-04-04 — Blob, SpatialObj, and Byte encodings decoded
+### 2026-04-04 - Blob, SpatialObj, and Byte encodings decoded
 
 **Corpus:** 168+ E2 files from 39+ repositories (expanded from 144). New files stored in `.untracked/e2/`.
 
@@ -892,7 +892,7 @@ Chronological record of binary analysis work, for auditability.
    - These blocks can be safely skipped by decoders that don't need spatial query support.
    - Tree Survey interleaves 5 × [0x02 + 0x03] pairs, then one 0x04, then sentinel.
 
-5. **Type 0x01 block size accounting corrected.** The declared `block_size` counts only the `0x0A` marker and Snappy data. The `uncompressed_size` (4 bytes) and `hash` (16 bytes) are stored between block_size and Snappy data but NOT counted. True on-disk size = `25 + block_size` bytes. This explains the "Snappy overshoot" observed previously — the 20-byte discrepancy was the uncompressed_size + hash fields. Verified across all 33 type 0x01 blocks in the new corpus.
+5. **Type 0x01 block size accounting corrected.** The declared `block_size` counts only the `0x0A` marker and Snappy data. The `uncompressed_size` (4 bytes) and `hash` (16 bytes) are stored between block_size and Snappy data but NOT counted. True on-disk size = `25 + block_size` bytes. This explains the "Snappy overshoot" observed previously - the 20-byte discrepancy was the uncompressed_size + hash fields. Verified across all 33 type 0x01 blocks in the new corpus.
 
 6. **Byte encoding confirmed: compact integer base=6.** Three files with Byte fields (10,002 total values). Byte uses the same compact prefix encoding as Int16/Int32/Int64 with base=6. **Critical finding: Byte always uses base=6 even in files where Int32 uses the base=5 variant.** This corrects the spec's statement that "the base variant applies uniformly to all integer types." Values: ages 21-30 (football), holes 1-18, pars 3-5 (golf).
 
@@ -904,7 +904,7 @@ Chronological record of binary analysis work, for auditability.
 
 ## References
 
-### Source A — habramsohn/MSBA-Portfolio
+### Source A - habramsohn/MSBA-Portfolio
 
 - **Repository:** https://github.com/habramsohn/MSBA-Portfolio
 - **Commit at time of sourcing:** `ba264c63d0c49749dd9e14513dbb41e684f62280` (2025-12-27)
@@ -912,170 +912,170 @@ Chronological record of binary analysis work, for auditability.
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/habramsohn/MSBA-Portfolio
 - **Container SHA-256:** `87CF416F973AA5753570AD811A719A5E2506767EA5CE184695953CFD0F3FDE0B`
 - **Container size:** 4,223,667 bytes
-- **Independence from SigilYX:** Yes — the repository is a personal MSBA (Master of Science in Business Analytics) portfolio by an unrelated student. No connection to SigilYX.
+- **Independence from SigilYX:** Yes - the repository is a personal MSBA (Master of Science in Business Analytics) portfolio by an unrelated student. No connection to SigilYX.
 - **EULA concern:** No evidence of violation. The files appear to be academic project outputs (EHR Data Transformation) shared publicly by the author.
 - **Contents:** The yxzp contains 5 yxdb files: 3 are E2 (`fileId=0x00440208`), 2 are E1 (`fileId=0x00440204`).
 
-### Source B — AkimasaKajitani/AdventOfCode
+### Source B - AkimasaKajitani/AdventOfCode
 
 - **Repository:** https://github.com/AkimasaKajitani/AdventOfCode
 - **Commit at time of sourcing:** `658bdc3a3ffc18e436bd4816259ba8adee3b9e47` (2025-12-12)
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/AkimasaKajitani/AdventOfCode
-- **Independence from SigilYX:** Yes — the repository is an independent Advent of Code solutions collection by an unrelated author. No connection to SigilYX.
+- **Independence from SigilYX:** Yes - the repository is an independent Advent of Code solutions collection by an unrelated author. No connection to SigilYX.
 - **EULA concern:** No evidence of violation. The files are puzzle input data for Advent of Code, shared publicly by the author.
 - **Contents:** 65 yxdb files across directories `2015/`, `2020/`, `2021/`, `2022/`, `2024/`, `2025/`. 64 are E2 (`fileId=0x00440208`), 1 is E1 (`fileId=0x00440204`).
 
-### Source C — PacktPublishing/Alteryx-Designer-Cookbook
+### Source C - PacktPublishing/Alteryx-Designer-Cookbook
 
 - **Repository:** https://github.com/PacktPublishing/Alteryx-Designer-Cookbook
 - **Commit at time of sourcing:** HEAD as of 2026-03-16
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/PacktPublishing/Alteryx-Designer-Cookbook
-- **Independence from SigilYX:** Yes — Packt Publishing cookbook companion repository. No connection to SigilYX.
+- **Independence from SigilYX:** Yes - Packt Publishing cookbook companion repository. No connection to SigilYX.
 - **EULA concern:** No evidence of violation. The file is publicly shared companion data for a published book.
 - **Contents:** 1 E2 yxdb file (`ch3/Recipe2/DATA/CityBike_extract.yxdb`). Contains DateTime, Double, Date, Int16, V_WString fields.
 
-### Source D — PacktPublishing/Data-Engineering-with-Alteryx
+### Source D - PacktPublishing/Data-Engineering-with-Alteryx
 
 - **Repository:** https://github.com/PacktPublishing/Data-Engineering-with-Alteryx
 - **Commit at time of sourcing:** HEAD as of 2026-03-16
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/PacktPublishing/Data-Engineering-with-Alteryx
-- **Independence from SigilYX:** Yes — Packt Publishing data engineering companion repository. No connection to SigilYX.
+- **Independence from SigilYX:** Yes - Packt Publishing data engineering companion repository. No connection to SigilYX.
 - **EULA concern:** No evidence of violation. The file is publicly shared companion data for a published book.
 - **Contents:** 1 E2 yxdb file (`Chapter 06/Data/places_child.yxdb`). Contains V_String fields only.
 
-### Source E — SaudAzmi/airport-alteryx-workflow
+### Source E - SaudAzmi/airport-alteryx-workflow
 
 - **Repository:** https://github.com/SaudAzmi/airport-alteryx-workflow
 - **Commit at time of sourcing:** HEAD as of 2026-03-16
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/SaudAzmi/airport-alteryx-workflow
-- **Independence from SigilYX:** Yes — personal airport data analysis project by an unrelated author. No connection to SigilYX.
+- **Independence from SigilYX:** Yes - personal airport data analysis project by an unrelated author. No connection to SigilYX.
 - **EULA concern:** No evidence of violation. The file is a publicly shared project output.
 - **Contents:** 1 E2 yxdb file (`Output/Airport_city_population.yxdb`). Contains Double, V_String, V_WString fields.
 
-### Source F — AltonDsouza/Alteryx-Challenge-482-
+### Source F - AltonDsouza/Alteryx-Challenge-482-
 
 - **Repository:** https://github.com/AltonDsouza/Alteryx-Challenge-482-
 - **Commit at time of sourcing:** HEAD as of 2026-03-16
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/AltonDsouza/Alteryx-Challenge-482-
-- **Independence from SigilYX:** Yes — personal Alteryx challenge solution by an unrelated author. No connection to SigilYX.
+- **Independence from SigilYX:** Yes - personal Alteryx challenge solution by an unrelated author. No connection to SigilYX.
 - **EULA concern:** No evidence of violation. The file is a publicly shared challenge solution.
 - **Contents:** 1 E2 yxdb file (`Challenge482_start_file/Outputs/Q3_Answer.yxdb`). Also present inside `Challenge482_start_file.yxzp`. Contains Double, V_WString fields.
 
-### Source G — liyengL/Alteryx_challenges
+### Source G - liyengL/Alteryx_challenges
 
 - **Repository:** https://github.com/liyengL/Alteryx_challenges
 - **Commit at time of sourcing:** HEAD as of 2026-03-16
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/liyengL/Alteryx_challenges
-- **Independence from SigilYX:** Yes — personal Alteryx challenges collection by an unrelated author. No connection to SigilYX.
+- **Independence from SigilYX:** Yes - personal Alteryx challenges collection by an unrelated author. No connection to SigilYX.
 - **EULA concern:** No evidence of violation. The file is a publicly shared challenge submission.
 - **Contents:** 1 E2 yxdb file extracted from `Movie.yxzp` (`Input335.yxdb`). Contains V_String fields only.
 
-### Source H — ABANISINGHA/Alteryx_workflows
+### Source H - ABANISINGHA/Alteryx_workflows
 
 - **Repository:** https://github.com/ABANISINGHA/Alteryx_workflows
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/ABANISINGHA/Alteryx_workflows
 - **Contents:** 1 E2 yxdb file. Types: Int32, V_String.
 
-### Source I — ChrisDataBlog/Alteryx-Inspire-2023---Design-Patterns-for-Testing
+### Source I - ChrisDataBlog/Alteryx-Inspire-2023---Design-Patterns-for-Testing
 
 - **Repository:** https://github.com/ChrisDataBlog/Alteryx-Inspire-2023---Design-Patterns-for-Testing
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/ChrisDataBlog/Alteryx-Inspire-2023---Design-Patterns-for-Testing
 - **Contents:** 1 E2 yxdb file. Types: Date, Int32, V_String.
 
-### Source J — FL-Marine/Alteryx-Work-Flows
+### Source J - FL-Marine/Alteryx-Work-Flows
 
 - **Repository:** https://github.com/FL-Marine/Alteryx-Work-Flows
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/FL-Marine/Alteryx-Work-Flows
 - **Contents:** 9 E2 yxdb files. Types: Byte, Date, Double, Int16, Int32, String, V_String, V_WString.
 
-### Source K — KOdoi-OJ/Capstone-Project-Combining-Predictive-Techniques
+### Source K - KOdoi-OJ/Capstone-Project-Combining-Predictive-Techniques
 
 - **Repository:** https://github.com/KOdoi-OJ/Capstone-Project-Combining-Predictive-Techniques
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/KOdoi-OJ/Capstone-Project-Combining-Predictive-Techniques
 - **Contents:** 2 E2 yxdb files. Types: Int64, V_WString.
 
-### Source L — MOHAMMADALI230/NovaKart-Profitability-Analytics
+### Source L - MOHAMMADALI230/NovaKart-Profitability-Analytics
 
 - **Repository:** https://github.com/MOHAMMADALI230/NovaKart-Profitability-Analytics
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/MOHAMMADALI230/NovaKart-Profitability-Analytics
 - **Contents:** 3 E2 yxdb files. Types: DateTime, Double, Int16, V_WString.
 
-### Source M — Satvikp546/Alteryx_Workflows
+### Source M - Satvikp546/Alteryx_Workflows
 
 - **Repository:** https://github.com/Satvikp546/Alteryx_Workflows
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/Satvikp546/Alteryx_Workflows
 - **Contents:** 1 E2 yxdb file. Types: Double, V_String.
 
-### Source N — SeanAdams10/AdventOfCodePython
+### Source N - SeanAdams10/AdventOfCodePython
 
 - **Repository:** https://github.com/SeanAdams10/AdventOfCodePython
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/SeanAdams10/AdventOfCodePython
 - **Contents:** 7 E2 yxdb files. Types: Int16, Int32, Int64, V_String, V_WString.
 
-### Source O — Sivivatu/Alteryx-Weekly-Challenge
+### Source O - Sivivatu/Alteryx-Weekly-Challenge
 
 - **Repository:** https://github.com/Sivivatu/Alteryx-Weekly-Challenge
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/Sivivatu/Alteryx-Weekly-Challenge
 - **Contents:** 1 E2 yxdb file. Types: Int32, V_String.
 
-### Source P — Szymon-Czuszek/Alteryx-Weekly-Challenges
+### Source P - Szymon-Czuszek/Alteryx-Weekly-Challenges
 
 - **Repository:** https://github.com/Szymon-Czuszek/Alteryx-Weekly-Challenges
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/Szymon-Czuszek/Alteryx-Weekly-Challenges
 - **Contents:** 6 E2 yxdb files. Types: Double, Float, V_String, V_WString.
 
-### Source Q — afnfyz/alteryx_weekly_challenge_filter
+### Source Q - afnfyz/alteryx_weekly_challenge_filter
 
 - **Repository:** https://github.com/afnfyz/alteryx_weekly_challenge_filter
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/afnfyz/alteryx_weekly_challenge_filter
 - **Contents:** 3 E2 yxdb files. Types: Date, V_String, V_WString.
 
-### Source R — joshuaburkhow/adventofcode
+### Source R - joshuaburkhow/adventofcode
 
 - **Repository:** https://github.com/joshuaburkhow/adventofcode
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/joshuaburkhow/adventofcode
 - **Contents:** 3 E2 yxdb files. Types: Int16, Int32, V_WString.
 
-### Source S — kumarritik24/Sales-Performance-Optimization-DC-Industries
+### Source S - kumarritik24/Sales-Performance-Optimization-DC-Industries
 
 - **Repository:** https://github.com/kumarritik24/Sales-Performance-Optimization-DC-Industries
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/kumarritik24/Sales-Performance-Optimization-DC-Industries
 - **Contents:** 1 E2 yxdb file. Types: Date, FixedDecimal, Int32, String, V_String, V_WString.
 
-### Source T — mishramayank24/predicitve_analytics_using_ALTERYX
+### Source T - mishramayank24/predicitve_analytics_using_ALTERYX
 
 - **Repository:** https://github.com/mishramayank24/predicitve_analytics_using_ALTERYX
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/mishramayank24/predicitve_analytics_using_ALTERYX
 - **Contents:** 2 E2 yxdb files. Types: Double, Int32, V_String, V_WString.
 
-### Source U — sarincr/Data-Analytics-with-Alteryx
+### Source U - sarincr/Data-Analytics-with-Alteryx
 
 - **Repository:** https://github.com/sarincr/Data-Analytics-with-Alteryx
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/sarincr/Data-Analytics-with-Alteryx
 - **Contents:** 3 E2 yxdb files. Types: V_String.
 
-### Source V — ziadasal/alteryx-mini-projects
+### Source V - ziadasal/alteryx-mini-projects
 
 - **Repository:** https://github.com/ziadasal/alteryx-mini-projects
 - **Sourced:** 2026-03-17
 - **Archive URL:** https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/ziadasal/alteryx-mini-projects
 - **Contents:** 1 E2 yxdb file. Types: Int32, V_String.
 
-### Source W — zulekhapathan/Customer-orders-Workflow-using-Alteryx-designer
+### Source W - zulekhapathan/Customer-orders-Workflow-using-Alteryx-designer
 
 - **Repository:** https://github.com/zulekhapathan/Customer-orders-Workflow-using-Alteryx-designer
 - **Sourced:** 2026-03-17
@@ -1369,7 +1369,7 @@ Extracted from `Analytics/EHR Data Transformation.yxzp` (SHA-256: `87CF416F...0F
 
 ### Summary
 
-**118 E2 files** across 23 sources (Sources A–G: 72 files, Sources H–W: 46 files).
+**118 E2 files** across 23 sources (Sources A-G: 72 files, Sources H-W: 46 files).
 
 | Source | Files | Software Heritage |
 |--------|-------|-------------------|

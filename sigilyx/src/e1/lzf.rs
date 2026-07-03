@@ -10,7 +10,7 @@ use crate::error::{Result, YxdbError};
 /// Compression algorithm used for record block data.
 ///
 /// Standard YXDB files use LZF (compression_version = 1 in the file header).
-/// Compression version 0 means uncompressed (no block framing — records stored
+/// Compression version 0 means uncompressed (no block framing - records stored
 /// directly in the file stream). This is supported for reading only; all writes
 /// use LZF for maximum compatibility with other YXDB readers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,7 +29,7 @@ impl CompressionAlgorithm {
 
     /// Parse a header compression_version value.
     ///
-    /// Returns `None` for version 0 (uncompressed — no block framing),
+    /// Returns `None` for version 0 (uncompressed - no block framing),
     /// `Some(Lzf)` for version 1 (LZF-compressed blocks).
     pub fn from_version_id(v: i32) -> Result<Option<Self>> {
         match v {
@@ -42,7 +42,7 @@ impl CompressionAlgorithm {
     }
 }
 
-// ── C liblzf FFI ──────────────────────────────────────────────────────
+// -- C liblzf FFI --
 
 extern "C" {
     fn lzf_decompress(
@@ -89,9 +89,9 @@ pub fn decompress_into(input: &[u8], out: &mut [u8]) -> Result<usize> {
     }
 }
 
-// ── Compression ────────────────────────────────────────────────────────
+// -- Compression --
 
-/// Hash table size — matches reference liblzf HLOG=16 for best compression.
+/// Hash table size - matches reference liblzf HLOG=16 for best compression.
 /// With 256 KiB blocks (~87K 3-byte hash keys), 65536 buckets give ~1.3 entries
 /// per bucket on average, minimising collisions. The previous value of 2^14
 /// (16384) caused ~5x more collisions and roughly halved compression effectiveness.
@@ -208,7 +208,7 @@ pub fn compress(input: &[u8]) -> Option<Vec<u8>> {
             lit_start = out.len();
             out.push(0);
         } else {
-            // No match — emit a literal byte
+            // No match - emit a literal byte
             out.push(input[ip]);
             lit += 1;
             ip += 1;
@@ -261,7 +261,7 @@ fn hash_idx(hval: u32) -> usize {
     ((hval >> 8).wrapping_sub(hval.wrapping_mul(5))) as usize & (HASH_SIZE - 1)
 }
 
-// ── Decompression ──────────────────────────────────────────────────────
+// -- Decompression --
 
 /// Decompress an LZF-compressed buffer into `out`.
 ///
@@ -361,7 +361,7 @@ mod tests {
     fn compress_returns_none_for_random_data() {
         // Random-ish data that won't compress well
         let data: Vec<u8> = (0..100).map(|i| (i * 37 + 13) as u8).collect();
-        // May or may not compress — just ensure round-trip works if it does
+        // May or may not compress - just ensure round-trip works if it does
         if let Some(compressed) = compress(&data) {
             let mut decompressed = vec![0u8; 256];
             let n = decompress(&compressed, &mut decompressed).unwrap();
@@ -393,7 +393,7 @@ mod tests {
         assert_eq!(&out[..n], &data[..]);
     }
 
-    // ── Edge-case / stress tests ─────────────────────────────────────
+    // -- Edge-case / stress tests --
 
     #[test]
     fn compress_all_zeros() {
@@ -417,7 +417,7 @@ mod tests {
 
     #[test]
     fn compress_exactly_max_lit_boundary() {
-        // 32 bytes is MAX_LIT boundary — make sure literal run splits work
+        // 32 bytes is MAX_LIT boundary - make sure literal run splits work
         let data: Vec<u8> = (0..64).map(|i| (i * 7 + 3) as u8).collect();
         if let Some(compressed) = compress(&data) {
             let mut decompressed = vec![0u8; 256];
@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn compress_block_size_data() {
-        // 256 KB — the YXDB block size
+        // 256 KB - the YXDB block size
         let data: Vec<u8> = (0..262144).map(|i| ((i * 13 + 7) % 256) as u8).collect();
         if let Some(compressed) = compress(&data) {
             let mut decompressed = vec![0u8; data.len()];

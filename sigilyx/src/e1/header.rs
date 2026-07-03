@@ -1,17 +1,17 @@
 use crate::error::{Result, YxdbError};
 use crate::field::{FieldMeta, FieldType};
 
-/// YXDB file header — always 512 bytes.
+/// YXDB file header - always 512 bytes.
 ///
 /// ## Layout
 /// - Bytes 0..21: Magic string `"Alteryx Database File"` (ASCII, null-padded)
-/// - Bytes 64..68: `file_id` (i32 LE) — `0x00440204` (WrigleyDB, no spatial index)
-/// - Bytes 80..84: `meta_info_size` (u32 LE) — number of **UTF-16 code units**
+/// - Bytes 64..68: `file_id` (i32 LE) - `0x00440204` (WrigleyDB, no spatial index)
+/// - Bytes 80..84: `meta_info_size` (u32 LE) - number of **UTF-16 code units**
 ///   in the XML metadata that follows the header (including a null terminator)
-/// - Bytes 96..104: `record_block_index_pos` (i64 LE) — file offset of the
+/// - Bytes 96..104: `record_block_index_pos` (i64 LE) - file offset of the
 ///   RecordBlockIndex, marking the end of compressed block data
 /// - Bytes 104..112: `num_records` (u64 LE)
-/// - Bytes 112..116: `compression_version` (i32 LE) — `0` for uncompressed (no block framing),
+/// - Bytes 112..116: `compression_version` (i32 LE) - `0` for uncompressed (no block framing),
 ///   `1` for LZF compression with block framing
 ///
 /// The XML metadata immediately follows the 512-byte header and is encoded as
@@ -25,8 +25,8 @@ pub struct YxdbHeader {
     pub record_block_index_pos: i64,
     /// File ID / version identifier.
     ///
-    /// - `0x00440204` — WrigleyDB without spatial index
-    /// - `0x00440205` — WrigleyDB with spatial index
+    /// - `0x00440204` - WrigleyDB without spatial index
+    /// - `0x00440205` - WrigleyDB with spatial index
     pub file_id: u32,
     /// File offset of the spatial index section (0 if none).
     ///
@@ -46,7 +46,7 @@ const MAX_RECORDS: u64 = 10_000_000_000;
 
 /// Maximum number of fields (columns) we accept from the XML metadata.
 ///
-/// 100,000 columns is generous — real-world files rarely exceed a few hundred.
+/// 100,000 columns is generous - real-world files rarely exceed a few hundred.
 /// This prevents pathological XML metadata from consuming excessive memory.
 pub const MAX_FIELDS: usize = 100_000;
 
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn parse_xml_nested_in_outer_element() {
-        // RecordInfo inside a wrapper — should still parse
+        // RecordInfo inside a wrapper - should still parse
         let xml = r#"<MetaInfo>
             <RecordInfo>
                 <Field name="x" type="Int32" />
@@ -408,7 +408,7 @@ mod tests {
         let mut buf = [0u8; HEADER_SIZE];
         buf[..MAGIC.len()].copy_from_slice(MAGIC);
 
-        // file_id says spatial index but pos is 0 — treat as no index
+        // file_id says spatial index but pos is 0 - treat as no index
         buf[64..68].copy_from_slice(&ID_WRIGLEYDB.to_le_bytes());
         buf[88..96].copy_from_slice(&0i64.to_le_bytes());
 

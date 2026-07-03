@@ -37,9 +37,9 @@ def read_yxdb(
     spatial : str, default ``"wkb"``
         How to handle ``SpatialObj`` columns:
 
-        - ``"wkb"`` — decode the internal SHP format to ISO Well-Known
+        - ``"wkb"`` - decode the internal SHP format to ISO Well-Known
           Binary, consumable by Shapely, GeoPandas, PostGIS, GDAL, etc.
-        - ``"raw"`` — keep the raw SHP bytes for expert/debug use.
+        - ``"raw"`` - keep the raw SHP bytes for expert/debug use.
     allow_unverified_e2_types : bool, default False
         If ``True``, attempt to read E2 files that contain field types
         whose decoders have never been verified against real data
@@ -336,7 +336,7 @@ def read_yxdb_batches(
     """Read an Alteryx YXDB file in batches (streaming / memory-efficient).
 
     Yields one ``polars.DataFrame`` per batch of up to *batch_size* rows.
-    This is truly streaming — only one batch is in memory at a time.
+    This is truly streaming - only one batch is in memory at a time.
 
     Parameters
     ----------

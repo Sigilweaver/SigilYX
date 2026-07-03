@@ -97,7 +97,7 @@ class TestLzfBlockBoundaries:
         assert df2.height == n
 
     def test_incompressible_data(self, tmp_path):
-        """Random-like data that doesn't compress well — forces uncompressed blocks."""
+        """Random-like data that doesn't compress well - forces uncompressed blocks."""
         import random
         random.seed(42)
         # Random strings are hard to compress with LZF
@@ -109,7 +109,7 @@ class TestLzfBlockBoundaries:
         assert df2["s"].to_list() == data
 
     def test_highly_compressible_data(self, tmp_path):
-        """All-same values — compresses extremely well."""
+        """All-same values - compresses extremely well."""
         n = 100_000
         df = pl.DataFrame({"s": ["AAAA"] * n})
         path = str(tmp_path / "compressible.yxdb")
@@ -140,7 +140,7 @@ class TestVariableLengthThresholds:
         assert df2["s"][0] == s
 
     def test_vstring_exactly_128_bytes(self, tmp_path):
-        """V_String with exactly 128 bytes — crosses into 4-byte header territory."""
+        """V_String with exactly 128 bytes - crosses into 4-byte header territory."""
         s = "B" * 128
         df = pl.DataFrame({"s": [s]})
         path = str(tmp_path / "v128.yxdb")
@@ -522,7 +522,7 @@ class TestConcurrentWrites:
     """Multiple threads writing separate files simultaneously."""
 
     def test_concurrent_writes_to_different_files(self, tmp_path):
-        """4 threads each writing a different file — all should succeed."""
+        """4 threads each writing a different file - all should succeed."""
         def write_file(i: int):
             df = pl.DataFrame({"id": list(range(1000)), "thread": [i] * 1000})
             path = str(tmp_path / f"concurrent_{i}.yxdb")
@@ -583,7 +583,7 @@ class TestMalformedFiles:
             sigilyx.read_yxdb(path)
 
     def test_negative_record_count_in_header(self, tmp_path):
-        """Header claiming negative record count — should raise cleanly, not panic."""
+        """Header claiming negative record count - should raise cleanly, not panic."""
         # Read a real file, corrupt the record count, write it back
         real_data = open(_yxdb("SingleColumn.yxdb"), "rb").read()
         corrupted = bytearray(real_data)
@@ -670,7 +670,7 @@ class TestStringEdgeCases:
         assert df2["s"][0] == s
 
     def test_latin_extended_a_full_range(self, tmp_path):
-        """U+0100 to U+017F (Latin Extended-A) — the range that tripped SIMD."""
+        """U+0100 to U+017F (Latin Extended-A) - the range that tripped SIMD."""
         chars = "".join(chr(c) for c in range(0x0100, 0x0180))
         df = pl.DataFrame({"s": [chars]})
         path = str(tmp_path / "latin_ext_a.yxdb")
@@ -784,7 +784,7 @@ class TestStressScenarios:
         assert df2.columns == df.columns
 
     def test_mixed_types_many_rows(self, tmp_path):
-        """50k rows with Int, Float, String, Bool, Date — crosses many LZF blocks."""
+        """50k rows with Int, Float, String, Bool, Date - crosses many LZF blocks."""
         n = 50_000
         df = pl.DataFrame({
             "id": pl.Series(list(range(n)), dtype=pl.Int64),
@@ -822,7 +822,7 @@ class TestStressScenarios:
             assert df2[col].null_count() == 3
 
     def test_single_value_repeated(self, tmp_path):
-        """Same value repeated 100k times — tests compression and correctness."""
+        """Same value repeated 100k times - tests compression and correctness."""
         n = 100_000
         df = pl.DataFrame({
             "v": pl.Series([42] * n, dtype=pl.Int32),

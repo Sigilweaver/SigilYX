@@ -2,7 +2,7 @@
 
 *Specification derived from open-source YXDB implementations; implementation is original.*
 
-> **Scope:** This specification covers the **E1** (original/legacy engine) YXDB format — the format produced by Alteryx Designer's original engine prior to AMP. See [SPECIFICATION-E2.md](SPECIFICATION-E2.md) for the AMP/E2 format.
+> **Scope:** This specification covers the **E1** (original/legacy engine) YXDB format - the format produced by Alteryx Designer's original engine prior to AMP. See [SPECIFICATION-E2.md](SPECIFICATION-E2.md) for the AMP/E2 format.
 
 ---
 
@@ -37,22 +37,22 @@ The header is a fixed 512-byte structure at the start of the file.
 | Offset | Size | Type | Description |
 |--------|------|------|-------------|
 | 0 | 21 | ASCII | Magic string: `"Alteryx Database File"` (null-padded to 21 bytes) |
-| 21 | 43 | — | Reserved / padding |
+| 21 | 43 | - | Reserved / padding |
 | 64 | 4 | u32 LE | **File ID**: `0x00440204` (no spatial index) or `0x00440205` (with spatial index) |
-| 68 | 12 | — | Reserved |
+| 68 | 12 | - | Reserved |
 | 80 | 4 | u32 LE | **Metadata size**: number of UTF-16 code units in the XML metadata (including null terminator). Byte length = value × 2. |
-| 84 | 4 | — | Reserved |
+| 84 | 4 | - | Reserved |
 | 88 | 8 | i64 LE | **Spatial index position**: file offset of the spatial index (0 if none). Only meaningful when File ID = `0x00440205`. |
 | 96 | 8 | i64 LE | **Record block index position**: file offset of the RecordBlockIndex (marks the end of compressed block data). |
 | 104 | 8 | u64 LE | **Record count**: total number of records in the file. |
 | 112 | 4 | i32 LE | **Compression version**: `0` = uncompressed (no block framing), `1` = LZF compression with block framing. |
-| 116 | 396 | — | Reserved / padding (null bytes) |
+| 116 | 396 | - | Reserved / padding (null bytes) |
 
 **Key fields:**
-- Bytes 64–67: File ID determines whether a spatial index is present
-- Bytes 80–83: Metadata size (in UTF-16 code units, multiply by 2 for byte length)
-- Bytes 104–111: Record count as little-endian unsigned 64-bit integer
-- Bytes 112–115: Compression version
+- Bytes 64-67: File ID determines whether a spatial index is present
+- Bytes 80-83: Metadata size (in UTF-16 code units, multiply by 2 for byte length)
+- Bytes 104-111: Record count as little-endian unsigned 64-bit integer
+- Bytes 112-115: Compression version
 
 ---
 
@@ -229,14 +229,14 @@ Files with **File ID = `0x00440205`** contain a spatial index, used by Alteryx f
 
 ### Identification
 
-- **`0x00440204`** — Standard WrigleyDB, no spatial index
-- **`0x00440205`** — WrigleyDB **with** spatial index
+- **`0x00440204`** - Standard WrigleyDB, no spatial index
+- **`0x00440205`** - WrigleyDB **with** spatial index
 
-The header field at bytes 88–95 (`spatial_index_pos`) holds the file offset of the spatial index metadata structure. A value of 0 indicates no spatial index even if the file ID is `0x00440205`.
+The header field at bytes 88-95 (`spatial_index_pos`) holds the file offset of the spatial index metadata structure. A value of 0 indicates no spatial index even if the file ID is `0x00440205`.
 
 ### Interleaved Spatial Grid Blocks
 
-When a spatial index is present, the LZF block stream may contain **spatial index grid blocks** interleaved with record blocks. These spatial grid blocks contain bounding-box and grid-cell data for the spatial index — they are **not** record data.
+When a spatial index is present, the LZF block stream may contain **spatial index grid blocks** interleaved with record blocks. These spatial grid blocks contain bounding-box and grid-cell data for the spatial index - they are **not** record data.
 
 ```
 ┌──────────────────────────────────┐
@@ -303,13 +303,13 @@ Write 512 bytes of zeros (or partial header). The record count at bytes 104-111 
 
 The following open-source projects were used as references:
 
-- **[Alteryx/OpenYXDB](https://github.com/alteryx/OpenYXDB)** — C++ implementation by Alteryx
-- **[NedHarding/Open_AlteryxYXDB](https://github.com/AlteryxNed/Open_AlteryxYXDB)** — C++ implementation (GPL-3.0)
-- **[yxdb-go](https://github.com/tlarsendataguy-yxdb/yxdb-go)** — Go implementation by @tlarsendataguy (MIT License)
-- **[yxdb-py](https://github.com/tlarsendataguy-yxdb/yxdb-py)** — Python implementation by @tlarsendataguy (MIT License)
-- **[yxdb-java](https://github.com/tlarsendataguy-yxdb/yxdb-java)** — Java implementation by @tlarsendataguy (MIT License)
-- **[yxdb-net](https://github.com/tlarsendataguy-yxdb/yxdb-net)** — .NET implementation by @tlarsendataguy (MIT License)
-- **[yxdb-odbc](https://github.com/tlarsendataguy-yxdb/yxdb-odbc)** — ODBC driver by @tlarsendataguy
+- **[Alteryx/OpenYXDB](https://github.com/alteryx/OpenYXDB)** - C++ implementation by Alteryx
+- **[NedHarding/Open_AlteryxYXDB](https://github.com/AlteryxNed/Open_AlteryxYXDB)** - C++ implementation (GPL-3.0)
+- **[yxdb-go](https://github.com/tlarsendataguy-yxdb/yxdb-go)** - Go implementation by @tlarsendataguy (MIT License)
+- **[yxdb-py](https://github.com/tlarsendataguy-yxdb/yxdb-py)** - Python implementation by @tlarsendataguy (MIT License)
+- **[yxdb-java](https://github.com/tlarsendataguy-yxdb/yxdb-java)** - Java implementation by @tlarsendataguy (MIT License)
+- **[yxdb-net](https://github.com/tlarsendataguy-yxdb/yxdb-net)** - .NET implementation by @tlarsendataguy (MIT License)
+- **[yxdb-odbc](https://github.com/tlarsendataguy-yxdb/yxdb-odbc)** - ODBC driver by @tlarsendataguy
 
 ---
 

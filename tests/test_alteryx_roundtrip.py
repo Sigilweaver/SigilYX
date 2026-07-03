@@ -6,10 +6,10 @@ validation: if Alteryx's own library can read our files and produce identical
 values, we know the binary format is correct.
 
 Tests are organized into 4 tiers:
-1. Read verification — both implementations read the same test files
-2. Write verification — SigilYX writes, Alteryx reads
-3. Full roundtrip — SigilYX write→read, verified against Alteryx read→read
-4. Targeted type coverage — specific field types that are tricky
+1. Read verification - both implementations read the same test files
+2. Write verification - SigilYX writes, Alteryx reads
+3. Full roundtrip - SigilYX write→read, verified against Alteryx read→read
+4. Targeted type coverage - specific field types that are tricky
 
 Requirements:
     - C++ dump tool (built separately, not bundled with the repo)
@@ -31,7 +31,7 @@ import pytest
 
 import sigilyx
 
-# ── Configuration ──────────────────────────────────────────────────────
+# -- Configuration --
 
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent
@@ -60,7 +60,7 @@ def _yxdb(name: str) -> str:
     return str(TEST_FILES_DIR / name)
 
 
-# ── C++ dump tool interface ───────────────────────────────────────────
+# -- C++ dump tool interface --
 
 
 def run_alteryx_dump(yxdb_path: str) -> dict:
@@ -147,7 +147,7 @@ def _format_value(val, field_type: str) -> str | None:
     return str(val)
 
 
-# ── Type mapping ──────────────────────────────────────────────────────
+# -- Type mapping --
 
 SIGILYX_TO_CPP_TYPE = {
     "Bool": "Bool", "Byte": "Byte", "Int16": "Int16",
@@ -165,7 +165,7 @@ def _types_match(sigilyx_type: str, cpp_type: str) -> bool:
     return expected == cpp_type
 
 
-# ── Comparison engine ─────────────────────────────────────────────────
+# -- Comparison engine --
 
 
 def _compare_values(
@@ -248,7 +248,7 @@ def assert_results_match(
 
 
 # ============================================================================
-#  Tier 1: Read existing test files — both impls should agree
+#  Tier 1: Read existing test files - both impls should agree
 # ============================================================================
 
 READ_TEST_FILES = [
@@ -297,7 +297,7 @@ class TestReadExistingFiles:
         assert len(sigilyx_data["rows"]) == len(cpp_data["rows"])
 
     def test_large_blob_file(self):
-        """LargeBlob.yxdb — verify blob sizes match between impls."""
+        """LargeBlob.yxdb - verify blob sizes match between impls."""
         path = _yxdb("LargeBlob.yxdb")
         if not Path(path).exists():
             pytest.skip("LargeBlob.yxdb not found")
@@ -701,7 +701,7 @@ class TestTypeSpecificAlteryx:
             os.unlink(tmp_path)
 
     def test_many_rows_cross_impl(self):
-        """50k rows verified by Alteryx — stress test for block boundaries."""
+        """50k rows verified by Alteryx - stress test for block boundaries."""
         n = 50_000
         df = pl.DataFrame({
             "id": pl.Series(list(range(n)), dtype=pl.Int32),
