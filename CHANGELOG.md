@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Dependencies bumped across the board (`cargo update`); `quick-xml` bumped
+  to 0.41, fixing RUSTSEC-2026-0194/-0195 (quadratic runtime / DoS) in the
+  copy SigilYX actually compiles.
+- CI: `Security audit` now ignores RUSTSEC-2026-0176/-0177 (pyo3, fixed
+  upstream in the unreleased `pyo3-polars`/polars monorepo HEAD but not yet
+  cut into a release) and RUSTSEC-2026-0194/-0195 for a second, unreachable
+  `quick-xml` instance pulled in by `object_store` (an optional dependency
+  gated behind polars' `cloud` feature, which SigilYX never enables) - see
+  `ci.yml` for the full reasoning.
+
 ## [0.3.1] - 2026-07-04
 
 ### Changed

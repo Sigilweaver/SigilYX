@@ -52,6 +52,20 @@ jobs:
         uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          # RUSTSEC-2026-0176/-0177 (pyo3 OOB read / missing Sync bound): fixed in
+          # pyo3 >=0.29, but pyo3-polars's latest release (0.27.0) hard-pins pyo3
+          # ^0.28. pyo3-polars was folded into the pola-rs/polars monorepo, whose
+          # HEAD already requires pyo3 = "0.29" - so this is already fixed upstream,
+          # just not yet cut into a pyo3-polars/polars release. Revisit on the next
+          # pyo3-polars bump.
+          # RUSTSEC-2026-0194/-0195 (quick-xml quadratic/DoS): the copy SigilYX
+          # actually compiles is patched (see quick-xml = "0.41" in sigilyx/Cargo.toml).
+          # The flagged instance is a second, unreachable quick-xml pulled in by
+          # object_store, itself an optional dependency of polars-io gated behind
+          # the "cloud" feature, which nothing here enables (verified via
+          # `cargo tree -i` returning empty for reqwest/object_store on any target).
+          # Blocked on object_store's own quick-xml bump upstream.
+          ignore: RUSTSEC-2026-0176,RUSTSEC-2026-0177,RUSTSEC-2026-0194,RUSTSEC-2026-0195
 
   rust-test:
     name: Rust test
