@@ -26,19 +26,37 @@ maturin develop --release
 
 - **Rust:** `cargo fmt --all` and `cargo clippy --workspace -- -D warnings`
 - **Python:** PEP 8, 120-char line length, type hints, Google-style docstrings
+- Source is ASCII-only (no smart quotes, em-dashes, or box-drawing characters)
+- Prefer [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`)
 
 ## Pull Request Checklist
 
 1. Fork and branch from `main`
 2. Add tests for your changes
-3. Run the full suite:
+3. Update [CHANGELOG.md](CHANGELOG.md) with an `[Unreleased]` entry for user-facing changes
+4. Run the full suite:
    ```bash
    cargo fmt --all -- --check
    cargo clippy --workspace -- -D warnings
-   cargo test --workspace
+   cargo test -p sigilyx --locked   # sigilyx-python is a PyO3 extension-module crate and
+                                    # can't be tested standalone - see Python step below
    pytest tests/ -v
    ```
-4. Open a PR with a clear description
+5. Open a PR with a clear description
+
+## Vendor Software and Clean-Room Policy
+
+SigilYX's YXDB support (both E1 and E2) was built without reference to any Alteryx proprietary software - see [SPECIFICATION.md](SPECIFICATION.md) for the methodology behind each format variant. Do not run, depend on, or validate changes against Alteryx Designer or any tool that reads YXDB through Alteryx's own libraries - not in CI, not in tests, not in local development.
+
+**Pull requests written or verified with the help of Alteryx Designer or other proprietary Alteryx tooling will not be accepted**, regardless of quality. If you found a bug this way, please open an issue describing the symptom and affected file instead, without pasting output learned from vendor software.
+
+## Security
+
+Please report security vulnerabilities privately - see [SECURITY.md](SECURITY.md). Do not open a public issue for security reports.
+
+## DCO
+
+By submitting a contribution you certify that you have the right to submit the work under the project license and agree to the [Developer Certificate of Origin](https://developercertificate.org/).
 
 ## License
 
