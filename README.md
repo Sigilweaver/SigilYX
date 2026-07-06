@@ -1,6 +1,6 @@
 # SigilYX
 
-*YXDB reader and writer for Rust, with Python bindings.*
+*Alteryx YXDB reader and writer for Rust, with Python bindings.*
 
 [![CI](https://github.com/Sigilweaver/SigilYX/actions/workflows/ci.yml/badge.svg)](https://github.com/Sigilweaver/SigilYX/actions/workflows/ci.yml)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20470609.svg)](https://doi.org/10.5281/zenodo.20470609)
