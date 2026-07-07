@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -244,41 +243,8 @@ impl YxdbReader {
         };
         let raw_data = &mmap[data_offset..block_data_end];
 
-        // Phase 2: Get decompressed record data.
-        // Version 0 (compression = None): raw_data IS the record data (no block framing).
-        //   Borrow directly from the mmap to avoid a full-file heap copy.
-        // Version 1+ (compression = Some): parse LZF block boundaries, decompress into owned Vec.
-        let all_data: Cow<'_, [u8]> = match compression {
-            None => {
-                // Version 0: no block framing - records stored directly in the stream
-                Cow::Borrowed(raw_data)
-            }
-            Some(algo) => {
-                let mut data = decompress_blocks(raw_data, algo, None)?;
-
-                // For spatial-index files with variable-length records: verify
-                // that all records parse correctly.  If not, the block stream
-                // contains interleaved spatial grid blocks that must be
-                // filtered out and the data re-decompressed.
-                if self.header.has_spatial_index()
-                    && has_var
-                    && !records_fit(&data, fixed_size, num_records)
-                {
-                    data = decompress_blocks(raw_data, algo, Some(fixed_size))?;
-                }
-
-                Cow::Owned(data)
-            }
-        };
-
-        // Phase 3: Compute record boundaries
-        let bounds = if has_var {
-            scan_variable_record_bounds(&all_data, fixed_size, num_records)
-        } else {
-            RecordBounds::Fixed { fixed_size }
-        };
-
-        // Phase 4: Build columns (parallel when beneficial)
+        // Resolve the requested column projection up front - it doesn't depend
+        // on any decompressed data, and both branches below need it.
         // Filter to requested columns if projection was specified.
         // Use HashSet for O(1) lookup, and preserve caller-specified column order.
         let projected_fields: Vec<&FieldMeta> = match columns {
@@ -310,27 +276,62 @@ impl YxdbReader {
             None => fields.iter().collect(),
         };
 
-        // Use parallel column building when:
-        // - Many columns (>= 6): per-column work adds up even for simple types
-        // - Large data (>= 10MB): per-column work is significant even with few columns
-        //   (e.g. 5 string columns requiring UTF-16 → UTF-8 transcoding)
-        const MIN_COLS_FOR_PAR: usize = 6;
-        const MIN_DATA_FOR_PAR: usize = 10 * 1024 * 1024; // 10 MB
+        // Phase 2+: Get decompressed record data and build columns.
+        //
+        // Version 0 (compression = None): raw_data IS the record data (no block
+        //   framing) - borrow directly from the mmap, then build columns in one
+        //   pass exactly as before (no extra copy to bound, so chunking buys
+        //   nothing here).
+        //
+        // Version 1+ (compression = Some), spatial-index case: rare/experimental
+        //   E2 WrigleyDB files interleave spatial-grid blocks within the block
+        //   stream, which requires a second whole-file decompression pass with
+        //   block-level filtering. Kept as a whole-file materialization for
+        //   simplicity, since this is not the common large-file path.
+        //
+        // Version 1+ (compression = Some), common case: decompress and build
+        //   columns in bounded-size chunks (`build_dataframe_compressed_chunked`)
+        //   instead of materializing the whole file's decompressed bytes before
+        //   building any columns. This is what makes reading large LZF-compressed
+        //   files (the vast majority of real YXDB files) not OOM: peak memory is
+        //   bounded by one chunk's decompressed size plus the DataFrame under
+        //   construction, instead of the full decompressed size plus the full
+        //   DataFrame simultaneously.
+        let cols: Vec<Column> = match compression {
+            None => {
+                let all_data = raw_data;
+                let bounds = if has_var {
+                    scan_variable_record_bounds(all_data, fixed_size, num_records)
+                } else {
+                    RecordBounds::Fixed { fixed_size }
+                };
+                build_columns_from_slice(&projected_fields, all_data, &bounds, num_records)?
+            }
+            Some(algo) if self.header.has_spatial_index() && has_var => {
+                let mut data = decompress_blocks(raw_data, algo, None)?;
+                // Verify that all records parse correctly. If not, the block
+                // stream contains interleaved spatial grid blocks that must be
+                // filtered out and the data re-decompressed.
+                if !records_fit(&data, fixed_size, num_records) {
+                    data = decompress_blocks(raw_data, algo, Some(fixed_size))?;
+                }
+                let bounds = if has_var {
+                    scan_variable_record_bounds(&data, fixed_size, num_records)
+                } else {
+                    RecordBounds::Fixed { fixed_size }
+                };
+                build_columns_from_slice(&projected_fields, &data, &bounds, num_records)?
+            }
+            Some(algo) => build_dataframe_compressed_chunked(
+                raw_data,
+                algo,
+                fixed_size,
+                has_var,
+                num_records,
+                &projected_fields,
+            )?,
+        };
 
-        let built_columns: Result<Vec<Column>> =
-            if projected_fields.len() >= MIN_COLS_FOR_PAR || all_data.len() >= MIN_DATA_FOR_PAR {
-                projected_fields
-                    .par_iter()
-                    .map(|field| build_column(field, &all_data, &bounds, num_records))
-                    .collect()
-            } else {
-                projected_fields
-                    .iter()
-                    .map(|field| build_column(field, &all_data, &bounds, num_records))
-                    .collect()
-            };
-
-        let cols = built_columns?;
         let height = cols.first().map_or(0, |c| c.len());
         DataFrame::new(height, cols).map_err(|e| YxdbError::ConversionError(e.to_string()))
     }
@@ -526,7 +527,6 @@ impl YxdbReader {
         }
     }
 }
-
 // -- Record scan helpers --
 
 /// Check whether `num_records` variable-length records can be parsed from `data`.
@@ -612,6 +612,30 @@ fn is_record_block(block_data: &[u8], fixed_size: usize) -> bool {
 
 // -- Block decompression --
 
+/// Standard LZF block size used by the YXDB writer. Most blocks decompress
+/// to exactly this many bytes; only the last block (and any oversized-record
+/// block) may differ.
+const BLOCK_SIZE: usize = 262144;
+
+/// Parse 4-byte block length headers into `(data_offset, length, is_uncompressed)`
+/// triples. This is a cheap sequential scan - it does not touch block contents.
+fn parse_block_boundaries(raw_data: &[u8]) -> Vec<(usize, usize, bool)> {
+    let mut blocks: Vec<(usize, usize, bool)> = Vec::new();
+    let mut pos = 0usize;
+    while pos + 4 <= raw_data.len() {
+        let raw_len = u32::from_le_bytes(raw_data[pos..pos + 4].try_into().unwrap()) as usize;
+        pos += 4;
+        let is_uncompressed = raw_len & 0x80000000 != 0;
+        let block_len = raw_len & 0x7FFFFFFF;
+        if pos + block_len > raw_data.len() {
+            break;
+        }
+        blocks.push((pos, block_len, is_uncompressed));
+        pos += block_len;
+    }
+    blocks
+}
+
 /// Decompress LZF block-framed data into a contiguous buffer.
 ///
 /// Parses 4-byte block length headers, decompresses blocks in parallel
@@ -626,34 +650,42 @@ fn decompress_blocks(
     algo: CompressionAlgorithm,
     spatial_record_filter: Option<usize>,
 ) -> Result<Vec<u8>> {
-    // Parse block boundaries (sequential scan - just reading 4-byte lengths)
-    let mut blocks: Vec<(usize, usize, bool)> = Vec::new(); // (data_offset, length, is_uncompressed)
-    let mut pos = 0usize;
-    while pos + 4 <= raw_data.len() {
-        let raw_len = u32::from_le_bytes(raw_data[pos..pos + 4].try_into().unwrap()) as usize;
-        pos += 4;
-        let is_uncompressed = raw_len & 0x80000000 != 0;
-        let block_len = raw_len & 0x7FFFFFFF;
-        if pos + block_len > raw_data.len() {
-            break;
-        }
-        blocks.push((pos, block_len, is_uncompressed));
-        pos += block_len;
-    }
+    let blocks = parse_block_boundaries(raw_data);
+    decompress_block_list(raw_data, &blocks, algo, 0, spatial_record_filter)
+}
 
-    const BLOCK_SIZE: usize = 262144;
+/// Decompress a specific list of LZF blocks (as returned by
+/// [`parse_block_boundaries`]) into a contiguous buffer, in parallel for
+/// large batches.
+///
+/// The output buffer reserves `prefix_len` bytes at the front, left
+/// zero-filled for the caller to fill in (used by the chunked reader to
+/// prepend carried-over bytes from the previous chunk without a second
+/// allocation/copy).
+///
+/// When `spatial_record_filter` is `Some(fixed_size)`, spatial index grid
+/// blocks are detected after decompression and excluded from the compacted
+/// output.
+fn decompress_block_list(
+    raw_data: &[u8],
+    blocks: &[(usize, usize, bool)],
+    algo: CompressionAlgorithm,
+    prefix_len: usize,
+    spatial_record_filter: Option<usize>,
+) -> Result<Vec<u8>> {
     const MIN_BLOCKS_FOR_PAR: usize = 8;
 
     let num_blocks = blocks.len();
 
-    // Pre-compute expected output sizes and cumulative offsets.
+    // Pre-compute expected output sizes and cumulative offsets (starting
+    // after the reserved prefix).
     // For compressed blocks, the decompressed size is at most BLOCK_SIZE for
     // standard blocks, but may be larger if the writer emitted an oversized
     // block (e.g. a single record > BLOCK_SIZE). Use a conservative estimate
     // of max(BLOCK_SIZE, compressed_length * 10) to handle both cases, and
     // retry with a larger buffer if decompression fails.
     let mut block_offsets: Vec<usize> = Vec::with_capacity(num_blocks + 1);
-    block_offsets.push(0);
+    block_offsets.push(prefix_len);
     for (idx, &(_offset, length, is_uncompressed)) in blocks.iter().enumerate() {
         let expected_output = if is_uncompressed {
             length
@@ -664,9 +696,9 @@ fn decompress_blocks(
         };
         block_offsets.push(block_offsets[idx] + expected_output);
     }
-    let max_total = *block_offsets.last().unwrap_or(&0);
+    let max_total = *block_offsets.last().unwrap_or(&prefix_len);
 
-    let mut all_data: Vec<u8> = vec![0u8; max_total.max(1)];
+    let mut all_data: Vec<u8> = vec![0u8; max_total.max(prefix_len).max(1)];
     let all_data_ptr = all_data.as_mut_ptr();
 
     // SAFETY: Each block writes to a disjoint sub-slice of `all_data`.
@@ -750,7 +782,8 @@ fn decompress_blocks(
     }
 
     // Compact: close gaps between blocks where actual size < allocated BLOCK_SIZE.
-    let mut write_pos = 0usize;
+    // Starts after the reserved prefix, which the caller fills in separately.
+    let mut write_pos = prefix_len;
     for (idx, &actual_size) in block_sizes.iter().enumerate() {
         let read_pos = block_offsets[idx];
         if write_pos != read_pos && actual_size > 0 {
@@ -874,6 +907,184 @@ fn build_column(
     Ok(Column::from(builder.into_series(&field.name)?))
 }
 
+// Use parallel column building when:
+// - Many columns (>= 6): per-column work adds up even for simple types
+// - Large data (>= 10MB): per-column work is significant even with few columns
+//   (e.g. 5 string columns requiring UTF-16 → UTF-8 transcoding)
+const MIN_COLS_FOR_PAR: usize = 6;
+const MIN_DATA_FOR_PAR: usize = 10 * 1024 * 1024; // 10 MB
+
+/// Build all projected columns from a single, fully-materialized data slice
+/// (parallel across columns when beneficial). Used by the whole-file paths:
+/// uncompressed files (borrowed directly from the mmap) and the rare
+/// spatial-index-with-variable-records fallback.
+fn build_columns_from_slice(
+    projected_fields: &[&FieldMeta],
+    all_data: &[u8],
+    bounds: &RecordBounds,
+    num_records: usize,
+) -> Result<Vec<Column>> {
+    if projected_fields.len() >= MIN_COLS_FOR_PAR || all_data.len() >= MIN_DATA_FOR_PAR {
+        projected_fields
+            .par_iter()
+            .map(|field| build_column(field, all_data, bounds, num_records))
+            .collect()
+    } else {
+        projected_fields
+            .iter()
+            .map(|field| build_column(field, all_data, bounds, num_records))
+            .collect()
+    }
+}
+
+/// Scan as many complete variable-length records as fit in `data`, returning
+/// their boundary offsets (as with [`scan_variable_record_bounds`], but
+/// without a `num_records` upper bound - it simply stops at the first
+/// incomplete trailing record instead of erroring).
+///
+/// `ends.len() - 1` is the number of complete records found, and
+/// `*ends.last().unwrap()` is the byte offset where the incomplete trailing
+/// record (if any) begins - i.e. how many trailing bytes the caller should
+/// carry over to prepend to the next chunk.
+fn scan_variable_record_bounds_partial(data: &[u8], fixed_size: usize) -> Vec<usize> {
+    let mut ends = vec![0usize];
+    let mut offset = 0usize;
+    loop {
+        let var_start = offset + fixed_size;
+        if var_start + 4 > data.len() {
+            break;
+        }
+        let var_len =
+            u32::from_le_bytes(data[var_start..var_start + 4].try_into().unwrap()) as usize;
+        let end = var_start + 4 + var_len;
+        if end > data.len() {
+            break;
+        }
+        offset = end;
+        ends.push(offset);
+    }
+    ends
+}
+
+/// Decompress and build columns in bounded-size chunks, instead of
+/// materializing the whole file's decompressed bytes before building any
+/// columns.
+///
+/// This is what lets reading large LZF-compressed YXDB files (the common
+/// case - all writes use LZF) avoid OOM: peak memory is bounded by roughly
+/// one chunk's decompressed size plus the columns built so far, rather than
+/// the full decompressed size plus the full built DataFrame held
+/// simultaneously.
+///
+/// Blocks are still decompressed in parallel within each chunk, and columns
+/// are still built in parallel across a chunk's records, so per-chunk
+/// throughput matches the whole-file path - only peak memory changes.
+fn build_dataframe_compressed_chunked(
+    raw_data: &[u8],
+    algo: CompressionAlgorithm,
+    fixed_size: usize,
+    has_var: bool,
+    num_records: usize,
+    projected_fields: &[&FieldMeta],
+) -> Result<Vec<Column>> {
+    // Target decompressed bytes to hold per chunk before building columns and
+    // releasing the buffer. This bounds peak memory to roughly this size (per
+    // chunk) plus the DataFrame under construction, instead of the whole
+    // file's decompressed size.
+    const CHUNK_BUDGET_BYTES: usize = 128 * 1024 * 1024;
+    // Cap the initial per-column allocation hint - `num_records` may be huge
+    // for large files, and over-reserving defeats the point of chunking.
+    const MAX_CAPACITY_HINT: usize = 1 << 20;
+
+    let blocks = parse_block_boundaries(raw_data);
+
+    let cap_hint = num_records.min(MAX_CAPACITY_HINT);
+    let mut builders: Vec<ColumnBuilder> = projected_fields
+        .iter()
+        .map(|f| ColumnBuilder::new(f, cap_hint))
+        .collect();
+
+    let mut carry: Vec<u8> = Vec::new();
+    let mut block_idx = 0usize;
+    let mut records_seen = 0usize;
+
+    while block_idx < blocks.len() || !carry.is_empty() {
+        // Gather a batch of blocks whose expected decompressed size, plus any
+        // carried-over bytes, totals roughly CHUNK_BUDGET_BYTES.
+        let batch_start = block_idx;
+        let mut expected = carry.len();
+        while block_idx < blocks.len() && expected < CHUNK_BUDGET_BYTES {
+            let (_offset, length, is_uncompressed) = blocks[block_idx];
+            expected += if is_uncompressed {
+                length
+            } else {
+                BLOCK_SIZE.max(length * 10)
+            };
+            block_idx += 1;
+        }
+        let batch = &blocks[batch_start..block_idx];
+        let is_last_batch = block_idx >= blocks.len();
+
+        let prefix_len = carry.len();
+        let mut chunk_data = decompress_block_list(raw_data, batch, algo, prefix_len, None)?;
+        chunk_data[..prefix_len].copy_from_slice(&carry);
+        carry.clear();
+
+        let (n_complete, tail_start, bounds) = if has_var {
+            let ends = scan_variable_record_bounds_partial(&chunk_data, fixed_size);
+            let n = ends.len() - 1;
+            let tail = *ends.last().unwrap();
+            (n, tail, RecordBounds::Variable { ends })
+        } else {
+            let n = chunk_data.len() / fixed_size;
+            (n, n * fixed_size, RecordBounds::Fixed { fixed_size })
+        };
+
+        if is_last_batch && tail_start != chunk_data.len() {
+            return Err(YxdbError::InvalidFile(
+                "trailing incomplete record data at end of file".into(),
+            ));
+        }
+
+        if n_complete > 0 {
+            if projected_fields.len() >= MIN_COLS_FOR_PAR || chunk_data.len() >= MIN_DATA_FOR_PAR {
+                builders
+                    .par_iter_mut()
+                    .zip(projected_fields.par_iter())
+                    .try_for_each(|(builder, field)| -> Result<()> {
+                        for i in 0..n_complete {
+                            let record = bounds.record_slice(&chunk_data, i)?;
+                            builder.push_from_record(record, field)?;
+                        }
+                        Ok(())
+                    })?;
+            } else {
+                for (builder, field) in builders.iter_mut().zip(projected_fields.iter()) {
+                    for i in 0..n_complete {
+                        let record = bounds.record_slice(&chunk_data, i)?;
+                        builder.push_from_record(record, field)?;
+                    }
+                }
+            }
+            records_seen += n_complete;
+        }
+
+        carry.extend_from_slice(&chunk_data[tail_start..]);
+    }
+
+    if records_seen != num_records {
+        return Err(YxdbError::InvalidFile(format!(
+            "expected {num_records} records but decoded {records_seen}"
+        )));
+    }
+
+    builders
+        .into_iter()
+        .zip(projected_fields.iter())
+        .map(|(b, f)| Ok(Column::from(b.into_series(&f.name)?)))
+        .collect::<Result<Vec<_>>>()
+}
+
 /// Parse an ASCII decimal string (e.g. "1234.5678") to an i128 unscaled value
 /// with the given scale. For scale=4: "1234.5678" → 12345678, "-0.01" → -100.
 fn parse_decimal_i128(s: &str, scale: usize) -> i128 {
@@ -988,7 +1199,10 @@ enum ColumnBuilder {
         validity: MutableBitmap,
         has_nulls: bool,
     },
-    Blob(Vec<Option<Vec<u8>>>),
+    /// Zero-allocation binary builder using Polars BinaryChunkedBuilder - avoids
+    /// a per-value heap allocation (`Vec<Option<Vec<u8>>>` allocates once per
+    /// non-null blob, which is wasteful for blob/spatial-heavy large files).
+    Blob(BinaryChunkedBuilder),
 }
 
 /// Hinnant's algorithm raw-day value for 1970-01-01 (Unix epoch).
@@ -1287,9 +1501,9 @@ impl ColumnBuilder {
                 validity: MutableBitmap::with_capacity(capacity),
                 has_nulls: false,
             },
-            FieldType::Blob | FieldType::SpatialObj => {
-                ColumnBuilder::Blob(Vec::with_capacity(capacity))
-            }
+            FieldType::Blob | FieldType::SpatialObj => ColumnBuilder::Blob(
+                BinaryChunkedBuilder::new(PlSmallStr::from(field.name.as_str()), capacity),
+            ),
         }
     }
 
@@ -1550,9 +1764,10 @@ impl ColumnBuilder {
                     }
                 }
             },
-            ColumnBuilder::Blob(v) => {
-                v.push(record::parse_var_data(record, off));
-            }
+            ColumnBuilder::Blob(builder) => match record::locate_var_data(record, off) {
+                None => builder.append_null(),
+                Some(bytes) => builder.append_value(bytes),
+            },
         }
         Ok(())
     }
@@ -1699,11 +1914,7 @@ impl ColumnBuilder {
                 };
                 ca.into_datetime(TimeUnit::Microseconds, None).into_series()
             }
-            ColumnBuilder::Blob(v) => {
-                // Store as Binary
-                let values: Vec<Option<&[u8]>> = v.iter().map(|opt| opt.as_deref()).collect();
-                Series::new(name.into(), values)
-            }
+            ColumnBuilder::Blob(builder) => builder.finish().into_series(),
         };
         Ok(s)
     }

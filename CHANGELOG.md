@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Reading large LZF-compressed YXDB files (the common case - all writes use
+  LZF) could OOM: the eager read path (`read_yxdb()` / `pl.read_yxdb()`)
+  decompressed the entire file into one buffer before building any columns,
+  holding both the full decompressed bytes and the full built DataFrame in
+  memory at once. It now decompresses and builds columns in bounded-size
+  chunks (~128 MiB), so peak memory is bounded by one chunk plus the
+  DataFrame under construction instead of the whole file's decompressed
+  size. Measured ~45% peak RSS reduction on a 4M-row / ~700 MB-decompressed
+  benchmark file, with no throughput regression. The already-existing
+  streaming APIs (`scan_yxdb()`, `read_yxdb_batches()`) are unaffected by
+  this change and remain the right choice when even the final DataFrame
+  wouldn't fit in memory.
+- `Blob`/`SpatialObj` columns no longer allocate a separate `Vec<u8>` per
+  value (`Vec<Option<Vec<u8>>>`); they're now built directly into Polars'
+  `BinaryChunkedBuilder`, cutting per-value overhead for blob/spatial-heavy
+  large files.
+
 ### Changed
 
 - Dependencies bumped across the board (`cargo update`); `quick-xml` bumped
