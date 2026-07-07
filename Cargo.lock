@@ -2733,7 +2733,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sigilyx"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "cc",
  "memmap2",
@@ -2748,7 +2748,7 @@ dependencies = [
 
 [[package]]
 name = "sigilyx-python"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "pyo3",
  "pyo3-polars",
