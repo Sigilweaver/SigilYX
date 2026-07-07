@@ -26,6 +26,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BinaryChunkedBuilder`, cutting per-value overhead for blob/spatial-heavy
   large files.
 
+### Performance
+
+- The streaming/batch read path (`next_record`/`next_batch`, and therefore
+  `scan_yxdb()`/`read_yxdb_batches()`) now decompresses each LZF block on a
+  background thread, one block ahead of the caller's consumption of the
+  current one, instead of decompressing synchronously on every block
+  boundary. File I/O and spatial-index-block-skip detection stay on the
+  caller's thread - the background thread only ever decompresses byte
+  buffers it's handed, so this doesn't change the streaming path's bounded-
+  memory characteristics (peak RSS unaffected in benchmarking; one extra
+  ~256 KB block resident at a time). Measured ~17-20% wall-clock improvement
+  reading a 6M-row benchmark file in streaming batches.
+
 ### Changed
 
 - Dependencies bumped across the board (`cargo update`); `quick-xml` bumped

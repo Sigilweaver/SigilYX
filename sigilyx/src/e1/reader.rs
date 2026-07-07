@@ -1,7 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::Mutex;
+use std::thread::JoinHandle;
 
 use arrow::bitmap::MutableBitmap;
 use memmap2::Mmap;
@@ -31,8 +34,15 @@ pub struct YxdbReader {
     lzf_out: Vec<u8>,
     lzf_out_idx: usize,
     lzf_out_size: usize,
-    lzf_in: Vec<u8>, // reusable compressed-input buffer
+    lzf_in: Vec<u8>,    // reusable compressed-input buffer
+    spare_out: Vec<u8>, // reusable decompression destination, held while lzf_out is in use
     current_record: u64,
+    // Background decompression prefetch: overlaps decompressing the next
+    // block with the caller consuming the current one. Lazily spawned on
+    // first use, and only ever used for LZF-compressed files - never for
+    // uncompressed (version 0) files, which bypass block reading entirely.
+    prefetch: Option<PrefetchWorker>,
+    request_outstanding: bool,
 }
 
 impl YxdbReader {
@@ -112,11 +122,14 @@ impl YxdbReader {
             fixed_size,
             has_var,
             compression,
-            lzf_out: vec![0u8; 262144],
+            lzf_out: Vec::new(),
             lzf_out_idx: 0,
             lzf_out_size: 0,
             lzf_in: Vec::with_capacity(262144),
+            spare_out: vec![0u8; 262144],
             current_record: 0,
+            prefetch: None,
+            request_outstanding: false,
         })
     }
 
@@ -478,55 +491,245 @@ impl YxdbReader {
     /// Only called when `self.compression` is `Some(_)` (block-framed data).
     /// When the file has a spatial index, spatial grid blocks are automatically
     /// detected and skipped so the caller sees only record data.
+    ///
+    /// Decompression of each block runs on a background thread (see
+    /// [`PrefetchWorker`]), one block ahead of what the caller is currently
+    /// consuming - by the time this block is exhausted, the next one is
+    /// usually already decompressed and waiting. File I/O and spatial-index
+    /// skip detection stay on this thread; the worker only ever decompresses
+    /// byte buffers it's handed, so `YxdbReader` never has to hand off file
+    /// ownership across threads.
     fn read_next_lzf_block(&mut self) -> Result<()> {
         let algo = self
             .compression
             .expect("read_next_lzf_block called with no compression");
 
-        loop {
-            // Read 4-byte block length
-            let mut len_buf = [0u8; 4];
-            self.stream.read_exact(&mut len_buf)?;
-            let raw_len = u32::from_le_bytes(len_buf) as usize;
-
-            let is_uncompressed = raw_len & 0x80000000 != 0;
-            let block_len = raw_len & 0x7FFFFFFF;
-
-            if is_uncompressed {
-                // Store directly
-                if self.lzf_out.len() < block_len {
-                    self.lzf_out.resize(block_len, 0);
-                }
-                self.stream.read_exact(&mut self.lzf_out[..block_len])?;
-                self.lzf_out_size = block_len;
-            } else {
-                // Reuse the lzf_in buffer to avoid per-block heap allocation
-                self.lzf_in.resize(block_len, 0);
-                self.stream.read_exact(&mut self.lzf_in[..block_len])?;
-                // Ensure output buffer is large enough for oversized blocks.
-                // Standard blocks decompress to at most BLOCK_SIZE (262144),
-                // but oversized records may produce larger output.
-                let min_out = 262144usize.max(block_len * 10);
-                if self.lzf_out.len() < min_out {
-                    self.lzf_out.resize(min_out, 0);
-                }
-                self.lzf_out_size =
-                    lzf::decompress_block(algo, &self.lzf_in[..block_len], &mut self.lzf_out)?;
+        // Make sure a request is in flight before we try to consume a
+        // result. On the very first call (or right after a spatial-skip
+        // iteration hit end-of-stream, which is itself an error below),
+        // nothing has been submitted yet.
+        if !self.request_outstanding {
+            if !self.submit_next(algo)? {
+                return Err(YxdbError::InvalidFile(
+                    "unexpected end of block stream".into(),
+                ));
             }
+            self.request_outstanding = true;
+        }
+
+        loop {
+            // Recycle the buffer the caller just finished reading from (a
+            // no-op on the very first iteration, when it's still empty).
+            self.spare_out = std::mem::take(&mut self.lzf_out);
+
+            let outcome = self
+                .prefetch
+                .as_ref()
+                .expect("request_outstanding implies the prefetch worker exists")
+                .result_rx
+                .lock()
+                .expect("prefetch result mutex poisoned")
+                .recv()
+                .map_err(|_| {
+                    YxdbError::LzfError("decompression worker terminated unexpectedly".into())
+                })??;
+            self.request_outstanding = false;
+
+            self.lzf_in = outcome.input;
+            self.lzf_out = outcome.out_buf;
+            self.lzf_out_size = outcome.len;
+            self.lzf_out_idx = 0;
+
+            // Eagerly submit the next block's decompression now, so it
+            // overlaps with this block's consumption instead of happening
+            // on the next call's critical path.
+            self.request_outstanding = self.submit_next(algo)?;
 
             // Skip spatial index grid blocks (present in files with file_id = 0x00440205).
             if self.header.has_spatial_index()
                 && self.has_var
                 && !is_record_block(&self.lzf_out[..self.lzf_out_size], self.fixed_size)
             {
+                if !self.request_outstanding {
+                    return Err(YxdbError::InvalidFile(
+                        "unexpected end of block stream while skipping spatial index blocks".into(),
+                    ));
+                }
                 continue;
             }
 
-            self.lzf_out_idx = 0;
             return Ok(());
         }
     }
+
+    /// Read the next raw block from the stream, if any remain, and hand it
+    /// to the background worker for decompression.
+    ///
+    /// Returns `Ok(false)` at a clean end-of-stream (no more blocks - not an
+    /// error, since callers use this to prefetch speculatively ahead of
+    /// definite need), `Ok(true)` if a decompression job was submitted.
+    fn submit_next(&mut self, algo: CompressionAlgorithm) -> Result<bool> {
+        // Peek without consuming: an empty buffer here means genuine EOF
+        // (no bytes left at all), as opposed to a short read partway through
+        // the next block, which is a real truncated-file error from the
+        // `read_exact` calls below.
+        if self.stream.fill_buf()?.is_empty() {
+            return Ok(false);
+        }
+
+        let mut len_buf = [0u8; 4];
+        self.stream.read_exact(&mut len_buf)?;
+        let raw_len = u32::from_le_bytes(len_buf) as usize;
+        let is_uncompressed = raw_len & 0x80000000 != 0;
+        let block_len = raw_len & 0x7FFFFFFF;
+
+        // Reuse the lzf_in buffer to avoid a per-block heap allocation; it's
+        // handed to the worker and comes back via the result channel.
+        let mut input = std::mem::take(&mut self.lzf_in);
+        input.resize(block_len, 0);
+        self.stream.read_exact(&mut input)?;
+
+        let out_buf = std::mem::take(&mut self.spare_out);
+
+        self.ensure_worker()
+            .request_tx()
+            .send(DecompressJob {
+                algo,
+                input,
+                is_uncompressed,
+                out_buf,
+            })
+            .map_err(|_| {
+                YxdbError::LzfError("decompression worker terminated unexpectedly".into())
+            })?;
+
+        Ok(true)
+    }
+
+    /// Lazily spawn the background decompression worker on first use.
+    fn ensure_worker(&mut self) -> &PrefetchWorker {
+        self.prefetch.get_or_insert_with(PrefetchWorker::spawn)
+    }
 }
+
+/// A decompression job sent to the background worker thread.
+struct DecompressJob {
+    algo: CompressionAlgorithm,
+    /// Raw bytes read from the stream: compressed if `!is_uncompressed`,
+    /// otherwise already the final record data.
+    input: Vec<u8>,
+    is_uncompressed: bool,
+    /// Reused destination buffer, resized as needed.
+    out_buf: Vec<u8>,
+}
+
+/// The result of a [`DecompressJob`], with both buffers handed back so the
+/// reader can reuse them for the next request.
+struct DecompressOutcome {
+    input: Vec<u8>,
+    out_buf: Vec<u8>,
+    len: usize,
+}
+
+/// Runs LZF block decompression on a dedicated background thread, one block
+/// ahead of the caller's consumption of the current one.
+///
+/// The worker is a pure byte-buffer transform - it never touches the file or
+/// any reader state, which keeps the threading here simple: no shared
+/// mutable state, no unsafe code, just two channels moving owned buffers
+/// back and forth.
+struct PrefetchWorker {
+    // `None` after `Drop` has taken it to signal shutdown; always `Some`
+    // during normal operation.
+    request_tx: Option<SyncSender<DecompressJob>>,
+    // `mpsc::Receiver` is intentionally `!Sync` (only one consumer is ever
+    // meant to call `recv()`). `YxdbReader` is only ever driven by one
+    // caller at a time, so this `Mutex` is never contended - it exists
+    // purely to satisfy PyO3's `Sync` bound on `#[pyclass]`-wrapped types.
+    result_rx: Mutex<Receiver<Result<DecompressOutcome>>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl PrefetchWorker {
+    fn spawn() -> Self {
+        // Depth 1: lets the reader stay one job ahead without unbounded
+        // buffering (bounding extra memory to roughly one block's worth).
+        let (request_tx, request_rx) = sync_channel::<DecompressJob>(1);
+        let (result_tx, result_rx) = sync_channel::<Result<DecompressOutcome>>(1);
+
+        let handle = std::thread::Builder::new()
+            .name("sigilyx-lzf-prefetch".into())
+            .spawn(move || {
+                while let Ok(job) = request_rx.recv() {
+                    let outcome = decompress_job(job);
+                    if result_tx.send(outcome).is_err() {
+                        break; // reader side dropped - nothing more to do
+                    }
+                }
+            })
+            .expect("failed to spawn LZF prefetch thread");
+
+        PrefetchWorker {
+            request_tx: Some(request_tx),
+            result_rx: Mutex::new(result_rx),
+            handle: Some(handle),
+        }
+    }
+
+    fn request_tx(&self) -> &SyncSender<DecompressJob> {
+        self.request_tx
+            .as_ref()
+            .expect("request_tx is only taken during Drop")
+    }
+}
+
+impl Drop for PrefetchWorker {
+    fn drop(&mut self) {
+        // Drop the sender first so the worker's `recv()` fails and its loop
+        // exits, then wait for it to finish. Without dropping the sender
+        // first, `join()` here would deadlock: the worker would sit blocked
+        // in `recv()` forever, since nothing else will send it a job.
+        self.request_tx.take();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Decompress (or copy, for uncompressed blocks) one job's input into its
+/// output buffer. Runs on the background worker thread.
+fn decompress_job(job: DecompressJob) -> Result<DecompressOutcome> {
+    let DecompressJob {
+        algo,
+        input,
+        is_uncompressed,
+        mut out_buf,
+    } = job;
+
+    let len = if is_uncompressed {
+        if out_buf.len() < input.len() {
+            out_buf.resize(input.len(), 0);
+        }
+        out_buf[..input.len()].copy_from_slice(&input);
+        input.len()
+    } else {
+        // Ensure output buffer is large enough for oversized blocks.
+        // Standard blocks decompress to at most BLOCK_SIZE, but oversized
+        // records may produce larger output.
+        let min_out = BLOCK_SIZE.max(input.len() * 10);
+        if out_buf.len() < min_out {
+            out_buf.resize(min_out, 0);
+        }
+        lzf::decompress_block(algo, &input, &mut out_buf)?
+    };
+
+    Ok(DecompressOutcome {
+        input,
+        out_buf,
+        len,
+    })
+}
+
 // -- Record scan helpers --
 
 /// Check whether `num_records` variable-length records can be parsed from `data`.

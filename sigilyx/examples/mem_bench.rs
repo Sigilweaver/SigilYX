@@ -181,8 +181,49 @@ fn main() {
             eprintln!("streamed {total} records in {:?}", t0.elapsed());
             report_peak_rss();
         }
+        Some("read-batches-verify") => {
+            let path = args.get(2).expect("path");
+            let batch_size: usize = args.get(3).map(|s| s.parse().unwrap()).unwrap_or(65_536);
+            let t0 = Instant::now();
+            let mut reader = YxdbReader::open(path).unwrap();
+            let mut i: usize = 0;
+            while let Some(batch) = reader.next_batch(batch_size, None).unwrap() {
+                let id_col = batch.column("id").unwrap().i64().unwrap();
+                let value_col = batch.column("value").unwrap().f64().unwrap();
+                let name_col = batch.column("name").unwrap().str().unwrap();
+                let notes_col = batch.column("notes").unwrap().str().unwrap();
+                for row in 0..batch.height() {
+                    assert_eq!(id_col.get(row), Some(i as i64), "id mismatch at row {i}");
+                    let expected_value = i as f64 * 1.0001;
+                    assert!(
+                        (value_col.get(row).unwrap() - expected_value).abs() < 1e-6,
+                        "value mismatch at row {i}"
+                    );
+                    let expected_name = format!("record-name-{i:08}-payload");
+                    assert_eq!(
+                        name_col.get(row),
+                        Some(expected_name.as_str()),
+                        "name mismatch at row {i}"
+                    );
+                    let expected_notes = format!("some longer descriptive text field for row {i} used to simulate a realistic wide string column with enough bytes to matter");
+                    assert_eq!(
+                        notes_col.get(row),
+                        Some(expected_notes.as_str()),
+                        "notes mismatch at row {i}"
+                    );
+                    i += 1;
+                }
+            }
+            eprintln!(
+                "verified {i} streamed rows byte-for-byte in {:?} - OK",
+                t0.elapsed()
+            );
+            report_peak_rss();
+        }
         _ => {
-            eprintln!("usage: mem_bench <generate|read|read-batches> <path> [n|batch_size]");
+            eprintln!(
+                "usage: mem_bench <generate|read|read-batches|read-batches-verify> <path> [n|batch_size]"
+            );
             std::process::exit(1);
         }
     }
