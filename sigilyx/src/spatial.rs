@@ -1080,14 +1080,6 @@ fn multi_wkb_type(base: u32, has_z: bool, has_m: bool) -> u32 {
     t
 }
 
-/// Size in bytes of one coordinate tuple.
-#[inline]
-#[allow(dead_code)]
-fn coord_byte_size(has_z: bool, has_m: bool) -> usize {
-    let dim = 2 + has_z as usize + has_m as usize;
-    dim * 8
-}
-
 // -- Spatial Mode --
 
 /// Controls how `SpatialObj` columns are represented after reading (or

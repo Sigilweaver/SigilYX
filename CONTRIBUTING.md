@@ -34,7 +34,9 @@ maturin develop --release
 1. Fork and branch from `main`
 2. Add tests for your changes
 3. Update [CHANGELOG.md](CHANGELOG.md) with an `[Unreleased]` entry for user-facing changes
-4. Run the full suite:
+4. Run the full suite. `python ci.py` runs the same checks CI does (fmt,
+   clippy, Rust tests, and the Python tests) in one command; or run them
+   individually:
    ```bash
    cargo fmt --all -- --check
    cargo clippy --workspace -- -D warnings
