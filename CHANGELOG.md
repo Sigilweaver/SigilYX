@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Docs: a Python API reference page (`/python/api-reference`) listing every
+  public class and function exported from the `sigilyx` package, with
+  signatures, parameters, and return types. Registered in `sidebars.ts` and
+  linked from the Python guide index. Contributed by @Nabejo.
+
 ## [0.3.2] - 2026-07-07
 
 ### Fixed
