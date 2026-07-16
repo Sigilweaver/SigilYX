@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A `cargo-fuzz` harness (`fuzz/`) over the YXDB parse path: targets for
+  `detect_format`, `YxdbReader::open` (E1), and `E2Reader::open` (E2, with
+  unverified field types enabled) exercised against arbitrary byte input.
+  Runs in CI on every push/PR touching the parser, plus a longer nightly
+  run, backing the third-party-input crash claim in SECURITY.md. Contributed
+  by @Nabejo.
+
 ## [0.3.2] - 2026-07-07
 
 ### Fixed

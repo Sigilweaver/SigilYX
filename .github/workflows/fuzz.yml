@@ -1,0 +1,57 @@
+# Fuzz the YXDB parse path.
+#
+# Runs each fuzz target for a short time budget on every push/PR that
+# touches the parser or the fuzz harness itself, plus a longer nightly run
+# to catch issues that need more iterations to surface. Backs the
+# third-party-input crash claim in SECURITY.md.
+
+name: Fuzz
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "sigilyx/src/**"
+      - "fuzz/**"
+      - ".github/workflows/fuzz.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "sigilyx/src/**"
+      - "fuzz/**"
+      - ".github/workflows/fuzz.yml"
+  schedule:
+    - cron: "0 7 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: cargo fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [detect_format, e1_reader_open, e2_reader_open]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: ./.github/actions/setup-sccache
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "fuzz -> target"
+
+      - uses: taiki-e/install-action@cargo-fuzz
+
+      - name: Fuzz ${{ matrix.target }}
+        run: >
+          cargo fuzz run ${{ matrix.target }} --
+          -max_total_time=${{ github.event_name == 'schedule' && 1800 || 60 }}
