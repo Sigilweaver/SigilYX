@@ -61,3 +61,4 @@ Both approaches use the same Rust reader. The Polars plugin API is syntactically
 - [Metadata](/python/metadata) - Inspect file structure without reading data
 - [Spatial & GeoArrow](/python/spatial) - Geospatial data, GeoArrow, and GeoPandas
 - [Row Reader](/python/row-reader) - Row-by-row iteration
+- [API Reference](/python/api-reference) - Complete signature reference for every public class and function
