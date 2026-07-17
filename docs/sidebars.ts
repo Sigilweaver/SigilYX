@@ -21,6 +21,7 @@ const sidebars: SidebarsConfig = {
         'python/metadata',
         'python/spatial',
         'python/row-reader',
+        'python/api-reference',
       ],
     },
     {
