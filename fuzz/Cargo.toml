@@ -1,0 +1,38 @@
+[package]
+name = "sigilyx-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tempfile = "3"
+
+[dependencies.sigilyx]
+path = "../sigilyx"
+
+[[bin]]
+name = "detect_format"
+path = "fuzz_targets/detect_format.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "e1_reader_open"
+path = "fuzz_targets/e1_reader_open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "e2_reader_open"
+path = "fuzz_targets/e2_reader_open.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
