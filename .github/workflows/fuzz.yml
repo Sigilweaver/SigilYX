@@ -55,5 +55,5 @@ jobs:
 
       - name: Fuzz ${{ matrix.target }}
         run: >
-          cargo fuzz run ${{ matrix.target }} --
+          cargo +nightly fuzz run ${{ matrix.target }} --
           -max_total_time=${{ github.event_name == 'schedule' && 1800 || 60 }}
