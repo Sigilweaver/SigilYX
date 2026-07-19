@@ -425,7 +425,7 @@ class TestPolarsOperations:
         df = df.drop("BlobCol")
         csv_path = tmp_path / "all_types.csv"
         df.write_csv(str(csv_path))
-        content = csv_path.read_text()
+        content = csv_path.read_text(encoding="utf-8")
         assert "ByteCol" in content
         assert "Alteryx" in content
 
