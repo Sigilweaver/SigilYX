@@ -68,9 +68,18 @@ jobs:
           ignore: RUSTSEC-2026-0176,RUSTSEC-2026-0177,RUSTSEC-2026-0194,RUSTSEC-2026-0195
 
   rust-test:
-    name: Rust test
-    runs-on: ubuntu-latest
+    name: Rust test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        # Mirrors publish-pypi.yml's wheel-build matrix: ubuntu-latest,
+        # macos-14 (aarch64), windows-latest (x64).
+        os: [ubuntu-latest, macos-14, windows-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -81,9 +90,18 @@ jobs:
         run: cargo test -p sigilyx --locked
 
   python-test:
-    name: Python test
-    runs-on: ubuntu-latest
+    name: Python test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        # Mirrors publish-pypi.yml's wheel-build matrix: ubuntu-latest,
+        # macos-14 (aarch64), windows-latest (x64).
+        os: [ubuntu-latest, macos-14, windows-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -95,7 +113,15 @@ jobs:
       - name: Build and test
         run: |
           uv venv --python 3.12
-          source .venv/bin/activate
+          # uv/venv put the activate script under bin/ on Linux/macOS and
+          # Scripts/ on Windows; Scripts/activate (no extension) is the
+          # bash-compatible variant meant for Git Bash, which is what
+          # windows-latest runners give us under `shell: bash`.
+          if [ -f .venv/bin/activate ]; then
+            source .venv/bin/activate
+          else
+            source .venv/Scripts/activate
+          fi
           uv pip install maturin polars pyarrow pandas pytest
           maturin develop --release
           pytest tests/ -v

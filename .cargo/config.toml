@@ -1,0 +1,13 @@
+# sigilyx-python hard-enables pyo3's `extension-module` feature (not gated
+# behind an optional/maturin-only flag), which disables linking against
+# libpython. `maturin` supplies the linker flags below itself at wheel-build
+# time, but a plain `cargo build`/`cargo test` on macOS does not, and fails
+# with linker errors like "undefined symbols ... _PyExc_AttributeError" (see
+# https://pyo3.rs/main/faq.html). Set unconditionally as a safety net for any
+# non-maturin cargo invocation that touches the sigilyx-python crate on
+# macOS, even though sigilyx-python's abi3-py39 feature has so far let pyo3's
+# own auto-detection handle this cleanly elsewhere in the org.
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
