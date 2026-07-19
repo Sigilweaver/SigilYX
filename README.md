@@ -19,7 +19,7 @@
 | Package | Install | Docs |
 |---------|---------|------|
 | **Python** (`sigilyx`) | `pip install sigilyx` | [PyPI](https://pypi.org/project/sigilyx/) - [API docs](https://sigilweaver.app/sigilyx/) |
-| **Rust** (`sigilyx`) | `sigilyx = "0.2"` in `Cargo.toml` | [crates.io](https://crates.io/crates/sigilyx) - [docs.rs](https://docs.rs/sigilyx) |
+| **Rust** (`sigilyx`) | `sigilyx = "0.3"` in `Cargo.toml` | [crates.io](https://crates.io/crates/sigilyx) - [docs.rs](https://docs.rs/sigilyx) |
 
 ## What's in the box
 

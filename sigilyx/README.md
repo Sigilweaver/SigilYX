@@ -25,7 +25,7 @@ YXDB is the native binary format used by [Alteryx](https://www.alteryx.com/) Des
 
 ```toml
 [dependencies]
-sigilyx = "0.2"
+sigilyx = "0.3"
 ```
 
 ## Quick Start
