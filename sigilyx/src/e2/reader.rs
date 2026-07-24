@@ -17,6 +17,14 @@ use super::record::{self, is_e2_verified_type, FieldValue};
 use crate::error::{Result, YxdbError};
 use crate::field::{FieldMeta, FieldType};
 
+/// Maximum byte length we accept for a single block's declared size.
+///
+/// 512 MiB is far beyond any observed E2 block (largest seen in the wild is
+/// a 1.3 MB blob). `block_size` is an untrusted u32 read straight off the
+/// wire, so without this cap a corrupt/malicious file can force a
+/// multi-gigabyte allocation before the block is actually read.
+const MAX_BLOCK_SIZE: usize = 512 * 1024 * 1024;
+
 /// An E2 YXDB reader.
 ///
 /// Reads E2-format YXDB files (magic "Alteryx e2 Database file"),
@@ -209,6 +217,11 @@ impl E2Reader {
                 self.stream.read_exact(&mut size_buf)?;
                 let block_size = u32::from_le_bytes(size_buf) as usize;
                 self.file_pos += 4;
+                if block_size > MAX_BLOCK_SIZE {
+                    return Err(YxdbError::InvalidFile(format!(
+                        "E2 type 0x01 block size {block_size} exceeds limit of {MAX_BLOCK_SIZE} (corrupt file?)",
+                    )));
+                }
 
                 // Read uncompressed_size (4 bytes) + hash (16 bytes) = 20 bytes
                 let mut header_buf = [0u8; 20];
@@ -243,6 +256,11 @@ impl E2Reader {
                 self.stream.read_exact(&mut size_buf)?;
                 let block_size = u32::from_le_bytes(size_buf) as usize;
                 self.file_pos += 4;
+                if block_size > MAX_BLOCK_SIZE {
+                    return Err(YxdbError::InvalidFile(format!(
+                        "E2 type 0x02 block size {block_size} exceeds limit of {MAX_BLOCK_SIZE} (corrupt file?)",
+                    )));
+                }
 
                 let mut block_data = vec![0u8; block_size];
                 self.stream.read_exact(&mut block_data)?;
@@ -272,6 +290,11 @@ impl E2Reader {
                 self.stream.read_exact(&mut size_buf)?;
                 let block_size = u32::from_le_bytes(size_buf) as usize;
                 self.file_pos += 4;
+                if block_size > MAX_BLOCK_SIZE {
+                    return Err(YxdbError::InvalidFile(format!(
+                        "E2 spatial index block size {block_size} exceeds limit of {MAX_BLOCK_SIZE} (corrupt file?)",
+                    )));
+                }
 
                 // Read inner_size (4 bytes, not counted in block_size)
                 let mut inner_buf = [0u8; 4];
@@ -720,5 +743,50 @@ fn field_values_to_series(
                 .collect_ca(PlSmallStr::from(name));
             Ok(ca.into_series())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Build a minimal valid E2 file (header + one-field metadata), then
+    /// append a type-0x02 block whose declared `block_size` is enormous.
+    fn write_e2_with_oversized_block(block_size: u32) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+
+        let xml = r#"<RecordInfo><Field name="x" type="Int32" size="4" /></RecordInfo>"#;
+
+        let mut buf = vec![0u8; HEADER_SIZE];
+        buf[0..header::MAGIC.len()].copy_from_slice(header::MAGIC);
+        for b in &mut buf[header::MAGIC.len()..64] {
+            *b = b' ';
+        }
+        buf[64..68].copy_from_slice(&header::FILE_ID.to_le_bytes());
+        buf[68..72].copy_from_slice(&0x40000001u32.to_le_bytes());
+        buf[96..100].copy_from_slice(&(xml.len() as u32).to_le_bytes());
+
+        file.write_all(&buf).unwrap();
+        file.write_all(xml.as_bytes()).unwrap();
+
+        // Type 0x02 block with a corrupt, oversized size prefix.
+        file.write_all(&[0x02]).unwrap();
+        file.write_all(&block_size.to_le_bytes()).unwrap();
+        file.flush().unwrap();
+
+        file
+    }
+
+    #[test]
+    fn oversized_block_size_rejected_without_allocating() {
+        // Same class of value the fuzzer found: a corrupt block_size field
+        // that would otherwise force a multi-gigabyte allocation before the
+        // (nonexistent) block data is even read.
+        let file = write_e2_with_oversized_block(u32::MAX);
+        let reader = E2Reader::open(file.path()).unwrap();
+        let err = reader.into_dataframe().unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("exceeds limit"), "unexpected error: {msg}");
     }
 }

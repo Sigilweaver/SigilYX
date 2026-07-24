@@ -14,6 +14,14 @@ pub const HEADER_SIZE: usize = 100;
 pub const MAGIC: &[u8] = b"Alteryx e2 Database file";
 pub const FILE_ID: u32 = 0x00440208;
 
+/// Maximum byte length we accept for the UTF-8 XML metadata block.
+///
+/// 64 MiB is far beyond any real E2 schema (observed files range from 338
+/// bytes to 7.6 MB total). `metadata_size` is an untrusted u32 straight from
+/// the file header, so without this cap a corrupt/malicious file can force
+/// a multi-gigabyte allocation before a single byte of metadata is read.
+pub const MAX_METADATA_SIZE: u32 = 64 * 1024 * 1024;
+
 /// Parsed E2 file header.
 #[derive(Debug)]
 pub struct E2Header {
@@ -41,6 +49,11 @@ impl E2Header {
         }
 
         let metadata_size = u32::from_le_bytes(buf[96..100].try_into().unwrap());
+        if metadata_size > MAX_METADATA_SIZE {
+            return Err(YxdbError::InvalidFile(format!(
+                "header metadata size {metadata_size} bytes exceeds limit of {MAX_METADATA_SIZE} (corrupt file?)",
+            )));
+        }
 
         Ok(E2Header {
             file_id,
@@ -163,6 +176,20 @@ mod tests {
         let header = E2Header::parse(&buf).unwrap();
         assert_eq!(header.file_id, FILE_ID);
         assert_eq!(header.metadata_size, 500);
+    }
+
+    #[test]
+    fn reject_oversized_metadata_size() {
+        let mut buf = [0u8; HEADER_SIZE];
+        buf[0..MAGIC.len()].copy_from_slice(MAGIC);
+        buf[64..68].copy_from_slice(&FILE_ID.to_le_bytes());
+        buf[68..72].copy_from_slice(&0x40000001u32.to_le_bytes());
+        // metadata_size = u32::MAX → ~4 GiB claimed metadata, same class of
+        // bug the fuzzer found via libFuzzer OOM aborts on corrupt headers.
+        buf[96..100].copy_from_slice(&u32::MAX.to_le_bytes());
+        let err = E2Header::parse(&buf).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("exceeds limit"), "unexpected error: {msg}");
     }
 
     #[test]

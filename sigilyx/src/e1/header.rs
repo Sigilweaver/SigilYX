@@ -50,6 +50,15 @@ const MAX_RECORDS: u64 = 10_000_000_000;
 /// This prevents pathological XML metadata from consuming excessive memory.
 pub const MAX_FIELDS: usize = 100_000;
 
+/// Maximum byte length we accept for the UTF-16 XML metadata block.
+///
+/// 64 MiB is far beyond any real YXDB schema (observed files carry metadata
+/// in the KB range). `meta_info_size` comes straight from the file header as
+/// an untrusted u32, so without this cap a corrupt/malicious file can force
+/// a multi-gigabyte allocation before a single byte of metadata is read
+/// (fuzzing found this via `oom-...` crashes allocating 2-7 GiB).
+pub const MAX_META_BYTES: u64 = 64 * 1024 * 1024;
+
 /// YXDB file ID for files **with** a spatial index.
 pub const ID_WRIGLEYDB: u32 = 0x00440205;
 /// YXDB file ID for files **without** a spatial index.
@@ -73,6 +82,14 @@ impl YxdbHeader {
         let record_block_index_pos = i64::from_le_bytes(buf[96..104].try_into().unwrap());
         let num_records = u64::from_le_bytes(buf[104..112].try_into().unwrap());
         let compression_version = i32::from_le_bytes(buf[112..116].try_into().unwrap());
+
+        // Guard against corrupt headers claiming an unreasonable metadata size.
+        let meta_byte_len = meta_info_size as u64 * 2;
+        if meta_byte_len > MAX_META_BYTES {
+            return Err(YxdbError::InvalidFile(format!(
+                "header metadata size {meta_byte_len} bytes exceeds limit of {MAX_META_BYTES} (corrupt file?)",
+            )));
+        }
 
         // Guard against corrupt headers with unreasonable record counts.
         if num_records > MAX_RECORDS {
@@ -236,6 +253,20 @@ mod tests {
         let hdr = YxdbHeader::parse(&buf).unwrap();
         assert_eq!(hdr.num_records, 0);
         assert_eq!(hdr.compression_version, 0);
+    }
+
+    #[test]
+    fn header_oversized_meta_info_size_rejected() {
+        let mut buf = [0u8; HEADER_SIZE];
+        buf[..MAGIC.len()].copy_from_slice(MAGIC);
+        // meta_info_size = u32::MAX code units → ~8 GiB of metadata bytes.
+        // This is the exact class of value libFuzzer's OOM detector found:
+        // a corrupt header claiming an unreasonable metadata size caused a
+        // multi-gigabyte allocation before a single byte was read.
+        buf[80..84].copy_from_slice(&u32::MAX.to_le_bytes());
+        let err = YxdbHeader::parse(&buf).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("exceeds limit"), "unexpected error: {msg}");
     }
 
     #[test]
