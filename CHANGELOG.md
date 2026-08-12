@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-12
+
 ### Added
 
 - A `cargo-fuzz` harness (`fuzz/`) over the YXDB parse path: targets for
@@ -19,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   public class and function exported from the `sigilyx` package, with
   signatures, parameters, and return types. Registered in `sidebars.ts` and
   linked from the Python guide index. Contributed by @Nabejo.
+
+### Fixed
+
+- E1/E2 metadata reads (`meta_info_size`/`metadata_size`) and E2 block
+  reads (`block_size`) sized a `Vec` from an untrusted `u32` read straight
+  off the header/wire, before any bytes were actually read, letting a
+  crafted or corrupt file trigger a 2-7 GiB allocation and OOM the
+  process. The new fuzz harness above caught this within days. Added
+  sanity-limit checks (64 MiB for XML metadata, 512 MiB for a single E2
+  block) mirroring the existing `MAX_RECORDS`/`MAX_FIELDS` guards, plus
+  regression tests reproducing the fuzzer's `u32::MAX`-style inputs.
 
 ## [0.3.2] - 2026-07-07
 
