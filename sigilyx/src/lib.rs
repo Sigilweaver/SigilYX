@@ -39,7 +39,10 @@ pub use e1::writer::{
 };
 pub use e2::reader::E2Reader;
 pub use error::{Result, YxdbError};
+// Re-exported so consumers can name the type this crate's readers return
+// without taking their own direct dependency on a matching polars version.
 pub use field::{FieldMeta, FieldType};
+pub use polars::prelude::DataFrame;
 pub use spatial::{shp_to_wkb, spatial_column_names, wkb_to_shp, SpatialMode};
 
 use polars::prelude::*;
@@ -154,16 +157,11 @@ pub fn read_yxdb_columns<P: AsRef<Path>>(
             apply_spatial_read(df, &fields, spatial)
         }
         YxdbFormat::E2 => {
-            // E2 reader doesn't support column projection yet;
-            // read all columns and then select the requested ones
             let mut reader = E2Reader::open(path)?;
             reader.set_allow_unverified(allow_unverified_e2_types);
             let fields = reader.fields.clone();
-            let df = reader.into_dataframe()?;
-            let df = apply_spatial_read(df, &fields, spatial)?;
-            let col_strs: Vec<PlSmallStr> = columns.iter().map(|c| PlSmallStr::from(*c)).collect();
-            df.select(col_strs.as_slice())
-                .map_err(|e| YxdbError::ConversionError(e.to_string()))
+            let df = reader.into_dataframe_projected(Some(columns))?;
+            apply_spatial_read(df, &fields, spatial)
         }
     }
 }

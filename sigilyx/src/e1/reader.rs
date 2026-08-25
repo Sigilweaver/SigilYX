@@ -43,6 +43,16 @@ pub struct YxdbReader {
     // uncompressed (version 0) files, which bypass block reading entirely.
     prefetch: Option<PrefetchWorker>,
     request_outstanding: bool,
+    /// Bytes of the record currently being read that have been consumed from
+    /// the block stream. Zero means the next byte starts a record.
+    record_bytes_read: usize,
+    /// Byte offset of `stream` within the file.
+    stream_pos: u64,
+    /// End of the block region, when the header locates the record block
+    /// index after it. The record block index and any spatial index that
+    /// follow the last block are not themselves blocks, so block reading
+    /// must stop here rather than at end of file.
+    block_region_end: Option<u64>,
 }
 
 impl YxdbReader {
@@ -114,6 +124,13 @@ impl YxdbReader {
 
         let compression = CompressionAlgorithm::from_version_id(header.compression_version)?;
 
+        let stream_pos = (HEADER_SIZE + meta_byte_len) as u64;
+        let block_region_end = if header.record_block_index_pos > stream_pos as i64 {
+            Some(header.record_block_index_pos as u64)
+        } else {
+            None
+        };
+
         Ok(YxdbReader {
             stream,
             header,
@@ -130,6 +147,9 @@ impl YxdbReader {
             current_record: 0,
             prefetch: None,
             request_outstanding: false,
+            record_bytes_read: 0,
+            stream_pos,
+            block_region_end,
         })
     }
 
@@ -142,6 +162,7 @@ impl YxdbReader {
         if self.current_record > self.header.num_records {
             return Ok(false);
         }
+        self.record_bytes_read = 0;
 
         if self.has_var {
             // Read fixed portion + 4-byte var-length header
@@ -321,19 +342,14 @@ impl YxdbReader {
                 build_columns_from_slice(&projected_fields, all_data, &bounds, num_records)?
             }
             Some(algo) if self.header.has_spatial_index() && has_var => {
-                let mut data = decompress_blocks(raw_data, algo, None)?;
-                // Verify that all records parse correctly. If not, the block
-                // stream contains interleaved spatial grid blocks that must be
-                // filtered out and the data re-decompressed.
-                if !records_fit(&data, fixed_size, num_records) {
-                    data = decompress_blocks(raw_data, algo, Some(fixed_size))?;
-                }
-                let bounds = if has_var {
-                    scan_variable_record_bounds(&data, fixed_size, num_records)
-                } else {
-                    RecordBounds::Fixed { fixed_size }
-                };
-                build_columns_from_slice(&projected_fields, &data, &bounds, num_records)?
+                build_spatial_index_columns(
+                    raw_data,
+                    algo,
+                    fixed_size,
+                    has_var,
+                    num_records,
+                    &projected_fields,
+                )?
             }
             Some(algo) => build_dataframe_compressed_chunked(
                 raw_data,
@@ -342,6 +358,7 @@ impl YxdbReader {
                 has_var,
                 num_records,
                 &projected_fields,
+                ChunkedOptions::default(),
             )?,
         };
 
@@ -479,6 +496,7 @@ impl YxdbReader {
             dest[dest_idx..dest_idx + to_copy]
                 .copy_from_slice(&self.lzf_out[self.lzf_out_idx..self.lzf_out_idx + to_copy]);
             self.lzf_out_idx += to_copy;
+            self.record_bytes_read += to_copy;
             dest_idx += to_copy;
             remaining -= to_copy;
         }
@@ -545,8 +563,27 @@ impl YxdbReader {
             // on the next call's critical path.
             self.request_outstanding = self.submit_next(algo)?;
 
-            // Skip spatial index grid blocks (present in files with file_id = 0x00440205).
-            if self.header.has_spatial_index()
+            // Skip spatial index grid blocks (present in files with
+            // file_id = 0x00440205).
+            //
+            // Grid blocks only ever sit on a group boundary, so a block is a
+            // candidate to skip only where one can appear:
+            //
+            // - `record_bytes_read == 0` puts the stream on a record
+            //   boundary. `is_record_block` reads a block as though a record
+            //   starts at its first byte, so it can only tell record data
+            //   from grid data there. A block reached part-way through a
+            //   record continues that record by definition.
+            // - the boundary also has to end a group. Within a group the next
+            //   block is always record data, including when a single record
+            //   is large enough to span several blocks - a case
+            //   `is_record_block` cannot distinguish from grid data.
+            let records_emitted = self.current_record.saturating_sub(1);
+            let on_group_boundary =
+                records_emitted > 0 && records_emitted % RECORDS_PER_INDEX_GROUP == 0;
+            if self.record_bytes_read == 0
+                && on_group_boundary
+                && self.header.has_spatial_index()
                 && self.has_var
                 && !is_record_block(&self.lzf_out[..self.lzf_out_size], self.fixed_size)
             {
@@ -569,6 +606,13 @@ impl YxdbReader {
     /// error, since callers use this to prefetch speculatively ahead of
     /// definite need), `Ok(true)` if a decompression job was submitted.
     fn submit_next(&mut self, algo: CompressionAlgorithm) -> Result<bool> {
+        if self
+            .block_region_end
+            .is_some_and(|end| self.stream_pos >= end)
+        {
+            return Ok(false);
+        }
+
         // Peek without consuming: an empty buffer here means genuine EOF
         // (no bytes left at all), as opposed to a short read partway through
         // the next block, which is a real truncated-file error from the
@@ -588,6 +632,7 @@ impl YxdbReader {
         let mut input = std::mem::take(&mut self.lzf_in);
         input.resize(block_len, 0);
         self.stream.read_exact(&mut input)?;
+        self.stream_pos += 4 + block_len as u64;
 
         let out_buf = std::mem::take(&mut self.spare_out);
 
@@ -732,28 +777,6 @@ fn decompress_job(job: DecompressJob) -> Result<DecompressOutcome> {
 
 // -- Record scan helpers --
 
-/// Check whether `num_records` variable-length records can be parsed from `data`.
-///
-/// Returns `true` if all records parse successfully (each record's var_len
-/// stays within bounds). Used as a fast pre-check before the full record
-/// boundary scan.
-fn records_fit(data: &[u8], fixed_size: usize, num_records: usize) -> bool {
-    let mut offset = 0usize;
-    for _ in 0..num_records {
-        let var_start = offset + fixed_size;
-        if var_start + 4 > data.len() {
-            return false;
-        }
-        let var_len =
-            u32::from_le_bytes(data[var_start..var_start + 4].try_into().unwrap()) as usize;
-        offset = var_start + 4 + var_len;
-        if offset > data.len() {
-            return false;
-        }
-    }
-    true
-}
-
 /// Scan variable-length records and return their boundary offsets.
 fn scan_variable_record_bounds(data: &[u8], fixed_size: usize, num_records: usize) -> RecordBounds {
     let mut ends = Vec::with_capacity(num_records + 1);
@@ -815,6 +838,13 @@ fn is_record_block(block_data: &[u8], fixed_size: usize) -> bool {
 
 // -- Block decompression --
 
+/// Number of records per record-block-index group.
+///
+/// The writer records a seek offset every this many records, and a file with a
+/// spatial index emits its grid blocks at those same boundaries (and once more
+/// after the last record). A grid block therefore never interrupts a group.
+const RECORDS_PER_INDEX_GROUP: u64 = 0x10000;
+
 /// Standard LZF block size used by the YXDB writer. Most blocks decompress
 /// to exactly this many bytes; only the last block (and any oversized-record
 /// block) may differ.
@@ -839,15 +869,12 @@ fn parse_block_boundaries(raw_data: &[u8]) -> Vec<(usize, usize, bool)> {
     blocks
 }
 
-/// Decompress LZF block-framed data into a contiguous buffer.
+/// Decompress every LZF block in `raw_data` into one contiguous buffer.
 ///
-/// Parses 4-byte block length headers, decompresses blocks in parallel
-/// for large files, and compacts the result into a single contiguous buffer.
-///
-/// When `spatial_record_filter` is `Some(fixed_size)`, spatial index grid
-/// blocks (present in files with `file_id = 0x00440205`) are detected after
-/// decompression and excluded from the compacted output, so the returned
-/// buffer contains only record data.
+/// Materialises the whole decompressed stream at once. Used only as the last
+/// resort for spatial-index files whose records cannot be walked in bounded
+/// chunks - a file holding a single record larger than a chunk has to be
+/// materialised whole regardless.
 fn decompress_blocks(
     raw_data: &[u8],
     algo: CompressionAlgorithm,
@@ -1182,6 +1209,74 @@ fn scan_variable_record_bounds_partial(data: &[u8], fixed_size: usize) -> Vec<us
 /// Blocks are still decompressed in parallel within each chunk, and columns
 /// are still built in parallel across a chunk's records, so per-chunk
 /// throughput matches the whole-file path - only peak memory changes.
+/// Build columns from a compressed file that carries a spatial index.
+///
+/// These files may interleave spatial grid blocks within the record block
+/// stream, and place the grid data after the last record rather than ending
+/// the block region on a record boundary.
+///
+/// Three reads are attempted in order, stopping at the first that accounts for
+/// every record:
+///
+/// 1. Chunked, taking every block as record data. Correct whenever no grid
+///    blocks are interleaved.
+/// 2. Chunked, excluding blocks that do not look like record data. Needed when
+///    grid blocks are interleaved, but it discards any block that does not
+///    begin at a record boundary.
+/// 3. Whole-file, taking every block as record data. Handles records larger
+///    than a chunk, which cannot be walked in bounded pieces and so have to be
+///    materialised in full.
+fn build_spatial_index_columns(
+    raw_data: &[u8],
+    algo: CompressionAlgorithm,
+    fixed_size: usize,
+    has_var: bool,
+    num_records: usize,
+    projected_fields: &[&FieldMeta],
+) -> Result<Vec<Column>> {
+    for spatial_record_filter in [None, Some(fixed_size)] {
+        let attempt = build_dataframe_compressed_chunked(
+            raw_data,
+            algo,
+            fixed_size,
+            has_var,
+            num_records,
+            projected_fields,
+            ChunkedOptions {
+                spatial_record_filter,
+                stop_at_record_count: true,
+            },
+        );
+        if let Ok(cols) = attempt {
+            return Ok(cols);
+        }
+    }
+
+    let data = decompress_blocks(raw_data, algo, None)?;
+    let bounds = scan_variable_record_bounds(&data, fixed_size, num_records);
+    build_columns_from_slice(projected_fields, &data, &bounds, num_records)
+}
+
+/// Options controlling how [`build_dataframe_compressed_chunked`] walks the
+/// block stream.
+#[derive(Clone, Copy, Default)]
+struct ChunkedOptions {
+    /// When `Some(fixed_size)`, spatial index grid blocks are detected after
+    /// decompression and excluded from the record stream.
+    spatial_record_filter: Option<usize>,
+    /// Stop once the header's record count has been decoded, and accept
+    /// whatever bytes follow the last record. Files with a spatial index
+    /// place grid data after the record stream, so their record data does
+    /// not run to the end of the block region.
+    ///
+    /// Setting this also bounds the bytes carried between chunks: with the
+    /// end-of-data check relaxed, a record chain that has desynced would
+    /// otherwise carry an ever-growing partial record forward. Exceeding the
+    /// bound is reported as an error, which the spatial-index caller uses to
+    /// fall back to a filtered read.
+    stop_at_record_count: bool,
+}
+
 fn build_dataframe_compressed_chunked(
     raw_data: &[u8],
     algo: CompressionAlgorithm,
@@ -1189,6 +1284,7 @@ fn build_dataframe_compressed_chunked(
     has_var: bool,
     num_records: usize,
     projected_fields: &[&FieldMeta],
+    options: ChunkedOptions,
 ) -> Result<Vec<Column>> {
     // Target decompressed bytes to hold per chunk before building columns and
     // releasing the buffer. This bounds peak memory to roughly this size (per
@@ -1198,6 +1294,9 @@ fn build_dataframe_compressed_chunked(
     // Cap the initial per-column allocation hint - `num_records` may be huge
     // for large files, and over-reserving defeats the point of chunking.
     const MAX_CAPACITY_HINT: usize = 1 << 20;
+    // Largest partial record accepted between chunks. See
+    // `ChunkedOptions::stop_at_record_count`.
+    const MAX_CARRY_BYTES: usize = 64 * 1024 * 1024;
 
     let blocks = parse_block_boundaries(raw_data);
 
@@ -1211,7 +1310,7 @@ fn build_dataframe_compressed_chunked(
     let mut block_idx = 0usize;
     let mut records_seen = 0usize;
 
-    while block_idx < blocks.len() || !carry.is_empty() {
+    while (block_idx < blocks.len() || !carry.is_empty()) && records_seen < num_records {
         // Gather a batch of blocks whose expected decompressed size, plus any
         // carried-over bytes, totals roughly CHUNK_BUDGET_BYTES.
         let batch_start = block_idx;
@@ -1229,11 +1328,17 @@ fn build_dataframe_compressed_chunked(
         let is_last_batch = block_idx >= blocks.len();
 
         let prefix_len = carry.len();
-        let mut chunk_data = decompress_block_list(raw_data, batch, algo, prefix_len, None)?;
+        let mut chunk_data = decompress_block_list(
+            raw_data,
+            batch,
+            algo,
+            prefix_len,
+            options.spatial_record_filter,
+        )?;
         chunk_data[..prefix_len].copy_from_slice(&carry);
         carry.clear();
 
-        let (n_complete, tail_start, bounds) = if has_var {
+        let (mut n_complete, tail_start, bounds) = if has_var {
             let ends = scan_variable_record_bounds_partial(&chunk_data, fixed_size);
             let n = ends.len() - 1;
             let tail = *ends.last().unwrap();
@@ -1243,7 +1348,9 @@ fn build_dataframe_compressed_chunked(
             (n, n * fixed_size, RecordBounds::Fixed { fixed_size })
         };
 
-        if is_last_batch && tail_start != chunk_data.len() {
+        if options.stop_at_record_count {
+            n_complete = n_complete.min(num_records - records_seen);
+        } else if is_last_batch && tail_start != chunk_data.len() {
             return Err(YxdbError::InvalidFile(
                 "trailing incomplete record data at end of file".into(),
             ));
@@ -1272,6 +1379,22 @@ fn build_dataframe_compressed_chunked(
             records_seen += n_complete;
         }
 
+        if records_seen >= num_records {
+            break;
+        }
+        if is_last_batch && n_complete == 0 {
+            // No blocks left and the carried bytes did not yield a record, so
+            // no further iteration can make progress.
+            break;
+        }
+
+        let tail_len = chunk_data.len() - tail_start;
+        if options.stop_at_record_count && tail_len > MAX_CARRY_BYTES {
+            return Err(YxdbError::InvalidFile(format!(
+                "record chain desynced: {tail_len} bytes carried forward without \
+                 completing a record"
+            )));
+        }
         carry.extend_from_slice(&chunk_data[tail_start..]);
     }
 

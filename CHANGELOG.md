@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Streaming reads for E2 (AMP-engine) files. `read_yxdb_batches`,
+  `scan_yxdb`, and the underlying `_YxdbBatchReader` now detect the file
+  format and dispatch accordingly, so E2 files can be read in
+  constant-memory batches with projection and row-limit pushdown. They
+  previously rejected E2 files outright, since they always opened the E1
+  reader.
+- `E2Reader::next_batch(batch_size, columns)`, decoding up to
+  `batch_size` records per call and resuming mid-block across calls;
+  `E2Reader::into_dataframe_projected`, materialising only the named
+  columns; and `E2Reader::count_records`, summing each block's declared
+  record count without framing or decoding any records.
+- `read_schema` and `record_count` accept E2 files.
+- `DataFrame` is re-exported from the crate root, so consumers can name
+  the readers' return type without matching the polars version
+  themselves.
+
+### Changed
+
+- `E2Reader::into_dataframe` decodes in batches and stacks them instead
+  of collecting every record's `FieldValue` form before building any
+  column, bounding peak memory to one batch plus the frame under
+  construction.
+- E1 files carrying a spatial index are read in bounded chunks where
+  possible. Such a file is read chunked, retried chunked with grid blocks
+  filtered out, and only decompressed whole when neither succeeds - which
+  happens when a single record is larger than a chunk and so cannot be
+  walked in pieces at all.
+- `read_yxdb_columns` pushes the projection into the E2 reader instead
+  of reading every column and selecting afterwards.
+- Opening an E2 file with the E1 reader reports that the file is E2 and
+  points at the format-detecting entry points, rather than reporting a
+  missing E1 magic string.
+
+### Fixed
+
+- Streaming an E1 file that carries a spatial index no longer skips record
+  data. Grid-block detection reads a block as though a record starts at its
+  first byte, and was applied to every block, so it also discarded blocks
+  reached part-way through a record and blocks holding one record too large
+  to fit. Detection now runs only where the format can place a grid block:
+  on a record boundary that also ends a record-block-index group. Across the
+  corpus this takes spatial-index files that stream successfully from 107 of
+  155 to 155 of 155, each matching its eager read row for row.
+- The E1 streaming reader read past the end of the block region and tried
+  to decompress the record block index as if it were a block. Block reads
+  now stop where the header locates that index, matching the bound the
+  whole-file reader already applied.
+
 ## [0.3.3] - 2026-08-12
 
 ### Added

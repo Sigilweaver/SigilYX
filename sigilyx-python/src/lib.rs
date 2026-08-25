@@ -2,7 +2,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use pyo3_polars::PyDataFrame;
 use sigilyx_core::{
-    read_yxdb_to_ipc, read_yxdb_to_ipc_batches, FieldValue, SpatialMode, YxdbReader, YxdbRowReader,
+    detect_format, read_yxdb_to_ipc, read_yxdb_to_ipc_batches, DataFrame, E2Reader, FieldValue,
+    SpatialMode, YxdbFormat, YxdbReader, YxdbRowReader,
 };
 
 use sigilyx_core::YxdbWriter;
@@ -278,10 +279,13 @@ fn read_yxdb(
 /// Each dict contains: name, type, size, scale.
 #[pyfunction]
 fn read_yxdb_schema(py: Python<'_>, path: &str) -> PyResult<Py<PyAny>> {
-    let reader = YxdbReader::open(path).map_err(to_py_err)?;
+    let fields = match detect_format(path).map_err(to_py_err)? {
+        YxdbFormat::E1 => YxdbReader::open(path).map_err(to_py_err)?.fields,
+        YxdbFormat::E2 => E2Reader::open(path).map_err(to_py_err)?.fields,
+    };
 
     let list = pyo3::types::PyList::empty(py);
-    for field in &reader.fields {
+    for field in &fields {
         let dict = pyo3::types::PyDict::new(py);
         dict.set_item("name", &field.name)?;
         dict.set_item("type", field.field_type.to_string())?;
@@ -295,8 +299,16 @@ fn read_yxdb_schema(py: Python<'_>, path: &str) -> PyResult<Py<PyAny>> {
 /// Return the number of records in a YXDB file without reading all data.
 #[pyfunction]
 fn read_yxdb_record_count(path: &str) -> PyResult<u64> {
-    let reader = YxdbReader::open(path).map_err(to_py_err)?;
-    Ok(reader.header.num_records)
+    match detect_format(path).map_err(to_py_err)? {
+        YxdbFormat::E1 => Ok(YxdbReader::open(path)
+            .map_err(to_py_err)?
+            .header
+            .num_records),
+        YxdbFormat::E2 => E2Reader::open(path)
+            .map_err(to_py_err)?
+            .count_records()
+            .map_err(to_py_err),
+    }
 }
 
 /// Return spatial index metadata from a YXDB file header.
@@ -470,9 +482,35 @@ impl YxdbStreamWriter {
 /// columns) and **n_rows limit** (stop after reading at most N rows).
 ///
 /// This is the building block for `scan_yxdb()` and `read_yxdb_batches()`.
+/// The format-specific reader backing a batch reader.
+enum BatchBackend {
+    E1(Box<YxdbReader>),
+    E2(Box<E2Reader>),
+}
+
+impl BatchBackend {
+    fn next_batch(
+        &mut self,
+        batch_size: usize,
+        columns: Option<&[&str]>,
+    ) -> sigilyx_core::Result<Option<DataFrame>> {
+        match self {
+            BatchBackend::E1(r) => r.next_batch(batch_size, columns),
+            BatchBackend::E2(r) => r.next_batch(batch_size, columns),
+        }
+    }
+
+    fn fields(&self) -> &[sigilyx_core::FieldMeta] {
+        match self {
+            BatchBackend::E1(r) => &r.fields,
+            BatchBackend::E2(r) => &r.fields,
+        }
+    }
+}
+
 #[pyclass(name = "_YxdbBatchReader")]
 struct PyYxdbBatchReader {
-    reader: Option<YxdbReader>,
+    reader: Option<BatchBackend>,
     batch_size: usize,
     columns: Option<Vec<String>>,
     n_rows_limit: Option<u64>,
@@ -483,7 +521,8 @@ struct PyYxdbBatchReader {
 impl PyYxdbBatchReader {
     /// Create a new streaming batch reader.
     ///
-    /// * `path` - YXDB file path.
+    /// * `path` - YXDB file path. E1 and E2 files are both supported; the
+    ///   format is detected from the file's magic string.
     /// * `batch_size` - Maximum rows per yielded DataFrame.
     /// * `columns` - Optional list of column names to project.
     /// * `n_rows` - Optional total row limit (early termination).
@@ -500,7 +539,12 @@ impl PyYxdbBatchReader {
                 "batch_size must be > 0",
             ));
         }
-        let reader = YxdbReader::open(path).map_err(to_py_err)?;
+        let reader = match detect_format(path).map_err(to_py_err)? {
+            YxdbFormat::E1 => {
+                BatchBackend::E1(Box::new(YxdbReader::open(path).map_err(to_py_err)?))
+            }
+            YxdbFormat::E2 => BatchBackend::E2(Box::new(E2Reader::open(path).map_err(to_py_err)?)),
+        };
         Ok(Self {
             reader: Some(reader),
             batch_size,
@@ -563,7 +607,7 @@ impl PyYxdbBatchReader {
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("reader is closed"))?;
 
         let list = PyList::empty(py);
-        for field in &reader.fields {
+        for field in reader.fields() {
             let dict = PyDict::new(py);
             dict.set_item("name", &field.name)?;
             dict.set_item("type", field.field_type.to_string())?;

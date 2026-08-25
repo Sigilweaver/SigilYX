@@ -45,6 +45,19 @@ pub struct E2Reader {
     allow_unverified: bool,
     /// Current file position (tracked for blob block offset keying).
     file_pos: u64,
+    /// Decompressed bytes of the record block currently being consumed.
+    current_block: Vec<u8>,
+    /// `(offset, length)` of each record within `current_block`.
+    current_spans: Vec<(usize, usize)>,
+    /// Index of the next unconsumed span in `current_spans`.
+    current_span_idx: usize,
+    /// Whether the date-flag probe has run. It uses the first record of the
+    /// first record block and applies to every record in the file.
+    date_flag_detected: bool,
+    /// Set once the block stream has reached its end sentinel or EOF.
+    exhausted: bool,
+    /// Whether the verified-field-type gate has already been applied.
+    types_checked: bool,
 }
 
 impl E2Reader {
@@ -87,6 +100,12 @@ impl E2Reader {
             blob_blocks: std::collections::HashMap::new(),
             allow_unverified: false,
             file_pos,
+            current_block: Vec::new(),
+            current_spans: Vec::new(),
+            current_span_idx: 0,
+            date_flag_detected: false,
+            exhausted: false,
+            types_checked: false,
         })
     }
 
@@ -125,70 +144,224 @@ impl E2Reader {
         )))
     }
 
+    /// Default number of records decoded per batch by [`Self::into_dataframe`].
+    pub const DEFAULT_BATCH_SIZE: usize = 65_536;
+
     /// Read all records and return a Polars DataFrame.
-    pub fn into_dataframe(mut self) -> Result<DataFrame> {
-        if !self.allow_unverified {
-            self.check_verified_types()?;
-        }
+    ///
+    /// Records are decoded in batches and stacked, so the intermediate
+    /// [`FieldValue`] form of only one batch is resident at a time.
+    pub fn into_dataframe(self) -> Result<DataFrame> {
+        self.into_dataframe_projected(None)
+    }
 
-        let fields = self.fields.clone();
-        let n_fields = fields.len();
-
-        // Column builders: one Vec<FieldValue> per column
-        let mut columns: Vec<Vec<FieldValue>> = vec![Vec::new(); n_fields];
-
-        // Read all blocks
-        let mut first_block = true;
-        while let Some(block) = self.read_block()? {
-            match block {
-                Block::Record(decompressed) => {
-                    let records = self.frame_records(&decompressed)?;
-
-                    // Auto-detect date flag on first block
-                    if first_block && !records.is_empty() {
-                        self.detect_date_flag(records[0]);
-                        first_block = false;
-                    }
-
-                    for rec_data in &records {
-                        match self.decode_record(rec_data) {
-                            Ok(row) => {
-                                for (col_idx, val) in row.into_iter().enumerate() {
-                                    columns[col_idx].push(val);
-                                }
-                            }
-                            Err(_) => {
-                                // Skip corrupted records by inserting nulls
-                                // (spec documents 1 anomalous record in Task1)
-                                for (col_idx, field) in fields.iter().enumerate() {
-                                    columns[col_idx].push(null_field_value(field.field_type));
-                                }
-                            }
-                        }
-                    }
+    /// Read all records, materialising only the named columns.
+    ///
+    /// See [`Self::next_batch`] for how `columns` is interpreted. `None`
+    /// returns all fields in file order.
+    pub fn into_dataframe_projected(mut self, columns: Option<&[&str]>) -> Result<DataFrame> {
+        let mut out: Option<DataFrame> = None;
+        while let Some(batch) = self.next_batch(Self::DEFAULT_BATCH_SIZE, columns)? {
+            match out.as_mut() {
+                Some(df) => {
+                    df.vstack_mut_owned(batch)
+                        .map_err(|e| YxdbError::ConversionError(e.to_string()))?;
                 }
-                Block::Blob(offset, data) => {
-                    self.blob_blocks.insert(offset, data);
-                }
+                None => out = Some(batch),
             }
         }
 
-        // Build Polars Series from column vectors
-        let height = if n_fields > 0 { columns[0].len() } else { 0 };
-        let cols: Vec<Column> = fields
+        match out {
+            Some(df) => Ok(df),
+            None => self.empty_dataframe(columns),
+        }
+    }
+
+    /// Count the records in the file without decoding them.
+    ///
+    /// The E2 header carries no record count, so this walks the block stream
+    /// and sums each record block's declared count. Record blocks are
+    /// decompressed but their records are never framed or decoded.
+    ///
+    /// Consumes the reader, since it reads the block stream to the end.
+    pub fn count_records(mut self) -> Result<u64> {
+        let mut total = 0u64;
+        while let Some(block) = self.read_block()? {
+            if let Block::Record(decompressed) = block {
+                if decompressed.len() < 8 {
+                    return Err(YxdbError::InvalidFile(
+                        "E2 decompressed block too small for record count".into(),
+                    ));
+                }
+                total += u32::from_le_bytes(decompressed[4..8].try_into().unwrap()) as u64;
+            }
+        }
+        Ok(total)
+    }
+
+    /// Decode up to `batch_size` records into a Polars DataFrame.
+    ///
+    /// Returns `None` once every record in the file has been consumed. Calls
+    /// resume where the previous one stopped, including part-way through a
+    /// block, so a sequence of calls yields every record exactly once.
+    ///
+    /// `columns` names the fields to materialise. Every field of every record
+    /// is still decoded, because E2 records are row-interleaved and each
+    /// field's width depends on the preceding ones, but only the named columns
+    /// are collected into the result. `None` returns all fields in file order.
+    pub fn next_batch(
+        &mut self,
+        batch_size: usize,
+        columns: Option<&[&str]>,
+    ) -> Result<Option<DataFrame>> {
+        if !self.allow_unverified && !self.types_checked {
+            self.check_verified_types()?;
+        }
+        self.types_checked = true;
+
+        let projection = self.resolve_projection(columns)?;
+        let mut builders: Vec<Vec<FieldValue>> = projection
             .iter()
-            .zip(columns)
-            .map(|(field, vals)| {
-                field_values_to_series(&field.name, field.field_type, vals).map(|s| s.into_column())
+            .map(|_| Vec::with_capacity(batch_size.min(Self::DEFAULT_BATCH_SIZE)))
+            .collect();
+
+        let mut produced = 0usize;
+        while produced < batch_size {
+            if self.current_span_idx >= self.current_spans.len() {
+                if !self.advance_to_record_block()? {
+                    break;
+                }
+                continue;
+            }
+
+            let (offset, length) = self.current_spans[self.current_span_idx];
+            let decoded = self.decode_record(&self.current_block[offset..offset + length]);
+            self.current_span_idx += 1;
+
+            match decoded {
+                Ok(mut row) => {
+                    // Projection indices are unique, so each value is taken once.
+                    for (slot, &field_idx) in builders.iter_mut().zip(projection.iter()) {
+                        slot.push(std::mem::replace(
+                            &mut row[field_idx],
+                            FieldValue::Bool(None),
+                        ));
+                    }
+                }
+                Err(_) => {
+                    // Records that fail to decode become all-null rows so the
+                    // row count still matches the file.
+                    for (slot, &field_idx) in builders.iter_mut().zip(projection.iter()) {
+                        slot.push(null_field_value(self.fields[field_idx].field_type));
+                    }
+                }
+            }
+            produced += 1;
+        }
+
+        if produced == 0 {
+            return Ok(None);
+        }
+        self.build_dataframe(&projection, builders, produced)
+            .map(Some)
+    }
+
+    /// Resolve `columns` to indices into [`Self::fields`], preserving the
+    /// requested order. `None` selects every field in file order.
+    fn resolve_projection(&self, columns: Option<&[&str]>) -> Result<Vec<usize>> {
+        let Some(names) = columns else {
+            return Ok((0..self.fields.len()).collect());
+        };
+
+        let by_name: std::collections::HashMap<&str, usize> = self
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.name.as_str(), i))
+            .collect();
+
+        let unknown: Vec<&str> = names
+            .iter()
+            .copied()
+            .filter(|n| !by_name.contains_key(n))
+            .collect();
+        if !unknown.is_empty() {
+            return Err(YxdbError::InvalidFile(format!(
+                "requested columns not found in file: {unknown:?}"
+            )));
+        }
+
+        Ok(names
+            .iter()
+            .filter_map(|n| by_name.get(n).copied())
+            .collect())
+    }
+
+    /// Read blocks until one holds at least one record, making it current.
+    ///
+    /// Blob blocks encountered on the way are cached for reference resolution.
+    /// Returns `false` when the block stream ends first.
+    fn advance_to_record_block(&mut self) -> Result<bool> {
+        loop {
+            if self.exhausted {
+                return Ok(false);
+            }
+            match self.read_block()? {
+                None => {
+                    self.exhausted = true;
+                    return Ok(false);
+                }
+                Some(Block::Blob(offset, data)) => {
+                    self.blob_blocks.insert(offset, data);
+                }
+                Some(Block::Record(decompressed)) => {
+                    let spans = self.frame_record_spans(&decompressed)?;
+                    if !self.date_flag_detected {
+                        if let Some(&(offset, length)) = spans.first() {
+                            self.detect_date_flag(&decompressed[offset..offset + length]);
+                            self.date_flag_detected = true;
+                        }
+                    }
+                    self.current_block = decompressed;
+                    self.current_spans = spans;
+                    self.current_span_idx = 0;
+                    if !self.current_spans.is_empty() {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Turn decoded column values into a DataFrame of the projected fields.
+    fn build_dataframe(
+        &self,
+        projection: &[usize],
+        builders: Vec<Vec<FieldValue>>,
+        height: usize,
+    ) -> Result<DataFrame> {
+        let cols: Vec<Column> = projection
+            .iter()
+            .zip(builders)
+            .map(|(&field_idx, values)| {
+                let field = &self.fields[field_idx];
+                field_values_to_series(&field.name, field.field_type, values)
+                    .map(|s| s.into_column())
             })
             .collect::<Result<Vec<_>>>()?;
 
         if cols.is_empty() {
             return Ok(DataFrame::empty());
         }
-
         DataFrame::new(height, cols)
             .map_err(|e| YxdbError::ConversionError(format!("failed to build DataFrame: {e}")))
+    }
+
+    /// Build a zero-row DataFrame carrying the projected columns' schema.
+    fn empty_dataframe(&self, columns: Option<&[&str]>) -> Result<DataFrame> {
+        let projection = self.resolve_projection(columns)?;
+        let builders = projection.iter().map(|_| Vec::new()).collect();
+        self.build_dataframe(&projection, builders, 0)
     }
 
     /// Read a single block from the stream.
@@ -316,7 +489,9 @@ impl E2Reader {
     }
 
     /// Frame records from decompressed block data.
-    fn frame_records<'a>(&self, decompressed: &'a [u8]) -> Result<Vec<&'a [u8]>> {
+    ///
+    /// Returns the `(offset, length)` of each record within `decompressed`.
+    fn frame_record_spans(&self, decompressed: &[u8]) -> Result<Vec<(usize, usize)>> {
         if decompressed.len() < 12 {
             return Err(YxdbError::InvalidFile(
                 "E2 decompressed block too small for header".into(),
@@ -343,7 +518,7 @@ impl E2Reader {
                 decompressed.len()
             )));
         }
-        records.push(&decompressed[pos..end]);
+        records.push((pos, first_record_size));
         pos = end;
 
         // Subsequent records: [u32 LE size] [record data]
@@ -364,7 +539,7 @@ impl E2Reader {
                     decompressed.len()
                 )));
             }
-            records.push(&decompressed[pos..end]);
+            records.push((pos, rec_size));
             pos = end;
         }
 
@@ -788,5 +963,228 @@ mod tests {
         let err = reader.into_dataframe().unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("exceeds limit"), "unexpected error: {msg}");
+    }
+
+    // -- Synthetic E2 files --
+
+    /// Encode an `Int32` field value in the compact integer encoding
+    /// (`base + value_byte_count`, then that many little-endian value bytes).
+    fn enc_i32(v: i32) -> Vec<u8> {
+        if v == 0 {
+            return vec![6];
+        }
+        let le = v.to_le_bytes();
+        let n = if v < 0 {
+            4
+        } else {
+            4 - le.iter().rev().take_while(|b| **b == 0).count()
+        };
+        let mut out = vec![6 + n as u8];
+        out.extend_from_slice(&le[..n]);
+        out
+    }
+
+    /// Encode a short `V_String` field value (`0x80 | len`, then the bytes).
+    fn enc_str(s: &str) -> Vec<u8> {
+        assert!(s.len() < 128, "test helper only encodes short strings");
+        let mut out = vec![0x80 | s.len() as u8];
+        out.extend_from_slice(s.as_bytes());
+        out
+    }
+
+    /// Frame and Snappy-compress one record block.
+    fn record_block(records: &[Vec<u8>]) -> Vec<u8> {
+        let mut inner = vec![0u8; 8];
+        inner[4..8].copy_from_slice(&(records.len() as u32).to_le_bytes());
+        // Every record carries a u32 size prefix. The first record's prefix
+        // sits in the block header slot at bytes 8..12; the rest sit
+        // immediately before their record.
+        for rec in records {
+            inner.extend_from_slice(&(rec.len() as u32).to_le_bytes());
+            inner.extend_from_slice(rec);
+        }
+        let inner_size = inner.len() as u32;
+        inner[0..4].copy_from_slice(&inner_size.to_le_bytes());
+
+        let compressed = snap::raw::Encoder::new().compress_vec(&inner).unwrap();
+        let mut block = vec![0x02];
+        block.extend_from_slice(&((compressed.len() + 1) as u32).to_le_bytes());
+        block.push(0x0A);
+        block.extend_from_slice(&compressed);
+        block
+    }
+
+    /// Write a complete E2 file: header, metadata, one block per element of
+    /// `blocks`, then the end-of-stream sentinel.
+    fn write_e2_file(xml: &str, blocks: &[Vec<Vec<u8>>]) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+
+        let mut buf = vec![0u8; HEADER_SIZE];
+        buf[0..header::MAGIC.len()].copy_from_slice(header::MAGIC);
+        for b in &mut buf[header::MAGIC.len()..64] {
+            *b = b' ';
+        }
+        buf[64..68].copy_from_slice(&header::FILE_ID.to_le_bytes());
+        buf[68..72].copy_from_slice(&0x40000001u32.to_le_bytes());
+        buf[96..100].copy_from_slice(&(xml.len() as u32).to_le_bytes());
+
+        file.write_all(&buf).unwrap();
+        file.write_all(xml.as_bytes()).unwrap();
+        for records in blocks {
+            file.write_all(&record_block(records)).unwrap();
+        }
+        file.write_all(&[0x00]).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
+    const ONE_INT_XML: &str =
+        r#"<RecordInfo><Field name="x" type="Int32" size="4" /></RecordInfo>"#;
+
+    const TWO_COL_XML: &str = r#"<RecordInfo><Field name="x" type="Int32" size="4" /><Field name="s" type="V_String" size="64" /></RecordInfo>"#;
+
+    /// A file of `n` records, split into blocks of `per_block`, holding
+    /// `x = 0..n`.
+    fn int_file(n: i32, per_block: usize) -> tempfile::NamedTempFile {
+        let blocks: Vec<Vec<Vec<u8>>> = (0..n)
+            .map(enc_i32)
+            .collect::<Vec<_>>()
+            .chunks(per_block)
+            .map(<[Vec<u8>]>::to_vec)
+            .collect();
+        write_e2_file(ONE_INT_XML, &blocks)
+    }
+
+    fn int_column(df: &DataFrame) -> Vec<i32> {
+        df.column("x")
+            .unwrap()
+            .i32()
+            .unwrap()
+            .into_no_null_iter()
+            .collect()
+    }
+
+    #[test]
+    fn into_dataframe_reads_every_record_across_blocks() {
+        let file = int_file(250, 40);
+        let df = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe()
+            .unwrap();
+        assert_eq!(df.height(), 250);
+        assert_eq!(int_column(&df), (0..250).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn batches_cover_every_record_in_order() {
+        // batch_size deliberately does not divide the block size, so batches
+        // start and end part-way through blocks.
+        let file = int_file(250, 40);
+        let mut reader = E2Reader::open(file.path()).unwrap();
+
+        let mut seen = Vec::new();
+        let mut sizes = Vec::new();
+        while let Some(batch) = reader.next_batch(30, None).unwrap() {
+            sizes.push(batch.height());
+            seen.extend(int_column(&batch));
+        }
+
+        assert_eq!(seen, (0..250).collect::<Vec<_>>());
+        assert!(
+            sizes.iter().take(sizes.len() - 1).all(|&n| n == 30),
+            "every batch but the last should be full: {sizes:?}"
+        );
+        assert_eq!(sizes.iter().sum::<usize>(), 250);
+    }
+
+    #[test]
+    fn batch_size_larger_than_file_yields_one_batch() {
+        let file = int_file(12, 5);
+        let mut reader = E2Reader::open(file.path()).unwrap();
+        let batch = reader.next_batch(1024, None).unwrap().unwrap();
+        assert_eq!(batch.height(), 12);
+        assert!(reader.next_batch(1024, None).unwrap().is_none());
+    }
+
+    #[test]
+    fn batched_read_matches_eager_read() {
+        let file = int_file(137, 16);
+        let eager = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe()
+            .unwrap();
+
+        let mut reader = E2Reader::open(file.path()).unwrap();
+        let mut batched: Option<DataFrame> = None;
+        while let Some(batch) = reader.next_batch(7, None).unwrap() {
+            match batched.as_mut() {
+                Some(df) => {
+                    df.vstack_mut_owned(batch).unwrap();
+                }
+                None => batched = Some(batch),
+            }
+        }
+        let batched = batched.unwrap();
+
+        assert_eq!(batched.height(), eager.height());
+        assert_eq!(int_column(&batched), int_column(&eager));
+    }
+
+    #[test]
+    fn projection_returns_requested_columns_in_order() {
+        let blocks = vec![vec![
+            [enc_i32(1), enc_str("a")].concat(),
+            [enc_i32(2), enc_str("bb")].concat(),
+        ]];
+        let file = write_e2_file(TWO_COL_XML, &blocks);
+
+        let df = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe_projected(Some(&["s", "x"]))
+            .unwrap();
+
+        assert_eq!(df.get_column_names(), vec!["s", "x"]);
+        assert_eq!(df.height(), 2);
+        assert_eq!(int_column(&df), vec![1, 2]);
+    }
+
+    #[test]
+    fn projection_rejects_unknown_column() {
+        let file = int_file(4, 4);
+        let err = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe_projected(Some(&["nope"]))
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("not found in file"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn count_records_matches_decoded_height() {
+        let file = int_file(250, 40);
+        let counted = E2Reader::open(file.path())
+            .unwrap()
+            .count_records()
+            .unwrap();
+        let df = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe()
+            .unwrap();
+        assert_eq!(counted, 250);
+        assert_eq!(counted as usize, df.height());
+    }
+
+    #[test]
+    fn empty_file_yields_zero_rows_with_schema() {
+        let file = write_e2_file(TWO_COL_XML, &[]);
+        let df = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe()
+            .unwrap();
+        assert_eq!(df.height(), 0);
+        assert_eq!(df.get_column_names(), vec!["x", "s"]);
+
+        let mut reader = E2Reader::open(file.path()).unwrap();
+        assert!(reader.next_batch(64, None).unwrap().is_none());
     }
 }

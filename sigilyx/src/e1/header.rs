@@ -73,6 +73,14 @@ impl YxdbHeader {
     /// Parse a 512-byte header buffer.
     pub fn parse(buf: &[u8; HEADER_SIZE]) -> Result<Self> {
         if &buf[0..MAGIC.len()] != MAGIC {
+            if buf.starts_with(crate::e2::header::MAGIC) {
+                return Err(YxdbError::InvalidFile(
+                    "this is an E2 (AMP engine) YXDB file; it cannot be read by the \
+                     E1 reader. Use the format-detecting entry points (read_yxdb, \
+                     read_yxdb_batches, scan_yxdb) or E2Reader directly."
+                        .into(),
+                ));
+            }
             return Err(YxdbError::InvalidFile(
                 "file does not start with 'Alteryx Database File'".into(),
             ));

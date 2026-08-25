@@ -149,7 +149,11 @@ def read_yxdb_fields(path: Union[str, Path]) -> list[FieldInfo]:
 
 
 def record_count(path: Union[str, Path]) -> int:
-    """Return the number of records in a YXDB file (header-only read).
+    """Return the number of records in a YXDB file.
+
+    For E1 files this reads the count straight from the header. E2 headers
+    carry no record count, so E2 files are counted by walking the block
+    stream and summing each block's declared count; no records are decoded.
 
     Parameters
     ----------
@@ -171,6 +175,8 @@ class YxdbRowReader:
     and extracting typed field values, without building columnar data.
     This is useful for streaming processing or when you only need a
     subset of records.
+
+    E1 files only. For E2 files, use :func:`read_yxdb_batches`.
 
     Parameters
     ----------
@@ -268,8 +274,11 @@ def scan_yxdb(path: Union[str, Path]) -> pl.LazyFrame:
     when ``.collect()`` is called, and Polars' projection pushdown
     (``with_columns``) and row-limit pushdown (``n_rows``) are respected.
 
+    Both E1 and E2 files are supported; the format is detected from the
+    file's magic string.
+
     Predicate pushdown is **not** supported by the YXDB format (rows are
-    interleaved and LZF-compressed with no block statistics), so any
+    interleaved and compressed with no block statistics), so any
     ``.filter()`` is applied after reading.
 
     Parameters
@@ -337,6 +346,9 @@ def read_yxdb_batches(
 
     Yields one ``polars.DataFrame`` per batch of up to *batch_size* rows.
     This is truly streaming - only one batch is in memory at a time.
+
+    Both E1 and E2 files are supported; the format is detected from the
+    file's magic string.
 
     Parameters
     ----------
