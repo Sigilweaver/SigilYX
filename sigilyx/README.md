@@ -8,7 +8,7 @@
 
 YXDB is the native binary format used by [Alteryx](https://www.alteryx.com/) Designer. SigilYX is a standalone, cross-platform reader and writer with native [Polars](https://pola.rs/) DataFrame integration. No native Alteryx Designer installation is required.
 
-> **Format scope:** SigilYX has full read/write support for the **E1** (original engine) YXDB layout. **Experimental** read support for **E2** (AMP engine) is included - 13 field types have been verified against real E2 files; 4 rare types (Blob, SpatialObj, Time, WString) have speculative decoders behind an opt-in flag. E2 writing is not yet supported. See [SPECIFICATION-E2.md](https://github.com/Sigilweaver/SigilYX/blob/main/SPECIFICATION-E2.md) for details.
+> **Format scope:** SigilYX has full read/write support for the **E1** (original engine) YXDB layout. **Experimental** read support for **E2** (AMP engine) is included - 15 field types have been verified against real E2 files; the rare Time and WString types retain speculative decoders behind an opt-in flag. E2 writing is not yet supported. E2 records that cannot be decoded raise an error rather than silently becoming null rows. See [SPECIFICATION-E2.md](https://github.com/Sigilweaver/SigilYX/blob/main/SPECIFICATION-E2.md) for details.
 
 ## Features
 

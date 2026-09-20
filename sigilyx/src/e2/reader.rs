@@ -25,6 +25,16 @@ use crate::field::{FieldMeta, FieldType};
 /// multi-gigabyte allocation before the block is actually read.
 const MAX_BLOCK_SIZE: usize = 512 * 1024 * 1024;
 
+/// Maximum number of distinct `(field, byte offset, date state)` nodes an
+/// ambiguous record may visit. Real records need at most a few hundred. The
+/// explicit cap keeps malformed schemas and adversarial prefix sequences from
+/// turning ambiguity recovery into unbounded work.
+const MAX_AMBIGUITY_STATES: usize = 16_384;
+
+/// Recursive ambiguity recovery is needed only for unusual mixed-width
+/// records. Keep its stack depth explicitly bounded.
+const MAX_AMBIGUITY_FIELDS: usize = 256;
+
 /// An E2 YXDB reader.
 ///
 /// Reads E2-format YXDB files (magic "Alteryx e2 Database file"),
@@ -41,6 +51,9 @@ pub struct E2Reader {
     /// For 0x12/0x13 references: one entry per blob, keyed by the file offset
     /// at which the type 0x01 block starts.
     blob_blocks: std::collections::HashMap<usize, Vec<u8>>,
+    /// Most recently read blob block. String-style 0x11 references are
+    /// relative to this block rather than an arbitrary cached block.
+    last_blob_offset: Option<usize>,
     /// Whether to allow reading unverified E2 field types.
     allow_unverified: bool,
     /// Current file position (tracked for blob block offset keying).
@@ -54,6 +67,11 @@ pub struct E2Reader {
     /// Whether the date-flag probe has run. It uses the first record of the
     /// first record block and applies to every record in the file.
     date_flag_detected: bool,
+    /// Preferred compact integer prefix base for Int32 fields. This is used
+    /// only to break ties: individual records may use either observed form.
+    integer_base: u8,
+    /// Number of records successfully emitted so far.
+    records_decoded: u64,
     /// Set once the block stream has reached its end sentinel or EOF.
     exhausted: bool,
     /// Whether the verified-field-type gate has already been applied.
@@ -98,12 +116,15 @@ impl E2Reader {
             meta_xml,
             has_date_flag: false,
             blob_blocks: std::collections::HashMap::new(),
+            last_blob_offset: None,
             allow_unverified: false,
             file_pos,
             current_block: Vec::new(),
             current_spans: Vec::new(),
             current_span_idx: 0,
             date_flag_detected: false,
+            integer_base: 6,
+            records_decoded: 0,
             exhausted: false,
             types_checked: false,
         })
@@ -112,7 +133,7 @@ impl E2Reader {
     /// Set whether to allow reading unverified E2 field types.
     ///
     /// By default, E2 files containing field types that have never been
-    /// verified against real corpus data (Time, WString, Blob, SpatialObj)
+    /// verified against real corpus data (Time and WString)
     /// will produce an error. Call this with `true` to attempt reading
     /// them anyway - the decoders are speculative and may produce incorrect
     /// results.
@@ -235,26 +256,22 @@ impl E2Reader {
             }
 
             let (offset, length) = self.current_spans[self.current_span_idx];
+            let record_number = self.records_decoded;
             let decoded = self.decode_record(&self.current_block[offset..offset + length]);
             self.current_span_idx += 1;
 
-            match decoded {
-                Ok(mut row) => {
-                    // Projection indices are unique, so each value is taken once.
-                    for (slot, &field_idx) in builders.iter_mut().zip(projection.iter()) {
-                        slot.push(std::mem::replace(
-                            &mut row[field_idx],
-                            FieldValue::Bool(None),
-                        ));
-                    }
-                }
-                Err(_) => {
-                    // Records that fail to decode become all-null rows so the
-                    // row count still matches the file.
-                    for (slot, &field_idx) in builders.iter_mut().zip(projection.iter()) {
-                        slot.push(null_field_value(self.fields[field_idx].field_type));
-                    }
-                }
+            let mut row = decoded.map_err(|e| {
+                YxdbError::ConversionError(format!(
+                    "E2 failed to decode record {record_number}: {e}"
+                ))
+            })?;
+            self.records_decoded += 1;
+            // Projection indices are unique, so each value is taken once.
+            for (slot, &field_idx) in builders.iter_mut().zip(projection.iter()) {
+                slot.push(std::mem::replace(
+                    &mut row[field_idx],
+                    FieldValue::Bool(None),
+                ));
             }
             produced += 1;
         }
@@ -313,14 +330,19 @@ impl E2Reader {
                 }
                 Some(Block::Blob(offset, data)) => {
                     self.blob_blocks.insert(offset, data);
+                    self.last_blob_offset = Some(offset);
                 }
                 Some(Block::Record(decompressed)) => {
                     let spans = self.frame_record_spans(&decompressed)?;
                     if !self.date_flag_detected {
                         if let Some(&(offset, length)) = spans.first() {
                             self.detect_date_flag(&decompressed[offset..offset + length]);
-                            self.date_flag_detected = true;
                         }
+                        self.detect_integer_base(&decompressed, &spans);
+                        if let Some(&(offset, length)) = spans.first() {
+                            self.detect_date_flag(&decompressed[offset..offset + length]);
+                        }
+                        self.date_flag_detected = true;
                     }
                     self.current_block = decompressed;
                     self.current_spans = spans;
@@ -560,8 +582,8 @@ impl E2Reader {
             return;
         }
 
-        let without = self.try_decode_consumed(record_data, false);
-        let with = self.try_decode_consumed(record_data, true);
+        let without = self.try_decode_consumed(record_data, false, self.integer_base);
+        let with = self.try_decode_consumed(record_data, true, self.integer_base);
 
         self.has_date_flag = with > without;
     }
@@ -569,7 +591,12 @@ impl E2Reader {
     /// Try decoding a record, returning the total bytes consumed.
     ///
     /// On error, returns the offset reached before the error (partial decode).
-    fn try_decode_consumed(&self, record_data: &[u8], has_date_flag: bool) -> usize {
+    fn try_decode_consumed(
+        &self,
+        record_data: &[u8],
+        has_date_flag: bool,
+        integer_base: u8,
+    ) -> usize {
         let mut offset = 0;
         let mut is_first_date = true;
 
@@ -581,6 +608,7 @@ impl E2Reader {
                 field.field_type,
                 is_date && is_first_date,
                 has_date_flag,
+                integer_base,
             ) {
                 Ok((_, consumed)) => {
                     offset += consumed;
@@ -594,72 +622,46 @@ impl E2Reader {
         offset
     }
 
+    /// Detect the compact-integer base used by this file. The base-5 AMP
+    /// variant changes every following field boundary, so evaluate a sample
+    /// of complete records rather than trusting a single prefix byte.
+    fn detect_integer_base(&mut self, decompressed: &[u8], spans: &[(usize, usize)]) {
+        if !self.fields.iter().any(|f| f.field_type == FieldType::Int32) {
+            return;
+        }
+
+        let score = |base| {
+            spans
+                .iter()
+                .take(128)
+                .map(|&(offset, length)| {
+                    let record = &decompressed[offset..offset + length];
+                    let consumed = self.try_decode_consumed(record, self.has_date_flag, base);
+                    (consumed == record.len(), consumed)
+                })
+                .fold(
+                    (0usize, 0usize),
+                    |(complete, consumed), (is_complete, bytes)| {
+                        (complete + is_complete as usize, consumed + bytes)
+                    },
+                )
+        };
+
+        let base_six = score(6);
+        let base_five = score(5);
+        if base_five > base_six {
+            self.integer_base = 5;
+        }
+    }
+
     /// Decode all fields from a single record.
     ///
-    /// Uses adaptive recovery for undocumented extra Int64 fields that appear
-    /// before string fields in some files (see spec finding #10, Task1 anomaly).
+    /// A record must be consumed exactly. In particular, Int32 prefix 0x09
+    /// can denote either the normal three-byte payload or an observed padded
+    /// four-byte payload. We first use the preferred form, then retry with
+    /// bounded per-field alternatives if that does not frame the record.
     fn decode_record(&self, record_data: &[u8]) -> Result<Vec<FieldValue>> {
-        let mut offset = 0;
-        let mut values = Vec::with_capacity(self.fields.len());
-        let mut is_first_date = true;
-
-        for field in &self.fields {
-            let is_date = field.field_type == FieldType::Date;
-            let result = record::decode_field(
-                record_data,
-                offset,
-                field.field_type,
-                is_date && is_first_date,
-                self.has_date_flag,
-            );
-
-            match result {
-                Ok((val, consumed)) => {
-                    offset += consumed;
-                    values.push(val);
-                }
-                Err(_) if matches!(field.field_type, FieldType::VString | FieldType::VWString) => {
-                    // Adaptive extra Int64 recovery: some files have an
-                    // undocumented Int64 field not in the XML metadata.
-                    // Skip it and retry the string field.
-                    if let Some(skip) = try_skip_extra_int64(record_data, offset) {
-                        offset += skip;
-                        let (val, consumed) = record::decode_field(
-                            record_data,
-                            offset,
-                            field.field_type,
-                            false,
-                            self.has_date_flag,
-                        )
-                        .map_err(|e| {
-                            YxdbError::ConversionError(format!(
-                                "E2 decode error in field '{}' (offset {offset}) \
-                                 after skipping extra Int64: {e}",
-                                field.name
-                            ))
-                        })?;
-                        offset += consumed;
-                        values.push(val);
-                    } else {
-                        return Err(YxdbError::ConversionError(format!(
-                            "E2 decode error in field '{}' (offset {offset}): \
-                             invalid prefix and no Int64 recovery possible",
-                            field.name
-                        )));
-                    }
-                }
-                Err(e) => {
-                    return Err(YxdbError::ConversionError(format!(
-                        "E2 decode error in field '{}' (offset {offset}): {e}",
-                        field.name
-                    )));
-                }
-            }
-
-            if is_date {
-                is_first_date = false;
-            }
-        }
+        let mut values = self.decode_record_values(record_data)?;
 
         // Resolve BlobRef values against stored blob blocks.
         //
@@ -678,18 +680,14 @@ impl E2Reader {
                     let ft = self.fields[i].field_type;
 
                     let resolved = if len == usize::MAX {
-                        // File-offset reference (0x12/0x13): look up by file offset
                         self.blob_blocks.get(&off).map(|data| data.as_slice())
                     } else {
-                        // Offset+length reference (0x11): find any blob block and
-                        // slice into it. In the Day12 style there's typically one
-                        // blob block containing all concatenated data.
-                        self.blob_blocks.values().next().and_then(|blob| {
-                            if off + len <= blob.len() {
-                                Some(&blob[off..off + len])
-                            } else {
-                                None
-                            }
+                        self.last_blob_offset.and_then(|last_blob_offset| {
+                            self.blob_blocks.get(&last_blob_offset).and_then(|blob| {
+                                off.checked_add(len)
+                                    .filter(|&end| end <= blob.len())
+                                    .map(|end| &blob[off..end])
+                            })
                         })
                     };
 
@@ -698,32 +696,274 @@ impl E2Reader {
                             FieldType::Blob | FieldType::SpatialObj => {
                                 FieldValue::Blob(Some(slice.to_vec()))
                             }
-                            _ => {
-                                let s = String::from_utf8_lossy(slice).into_owned();
-                                FieldValue::String(Some(s))
-                            }
+                            _ => FieldValue::String(Some(
+                                String::from_utf8_lossy(slice).into_owned(),
+                            )),
                         },
-                        None => match ft {
-                            FieldType::Blob | FieldType::SpatialObj => FieldValue::Blob(None),
-                            _ => FieldValue::String(None),
-                        },
+                        None => {
+                            return Err(YxdbError::ConversionError(format!(
+                                "E2 blob reference in field '{}' could not be resolved \
+                                 (offset {off}, length {})",
+                                self.fields[i].name,
+                                if len == usize::MAX {
+                                    "whole block".to_owned()
+                                } else {
+                                    len.to_string()
+                                }
+                            )));
+                        }
                     };
                 }
             }
         } else {
-            // No blob blocks available - convert any BlobRef to null
             for (i, val) in values.iter_mut().enumerate() {
                 if matches!(val, FieldValue::BlobRef(_, _)) {
-                    let ft = self.fields[i].field_type;
-                    *val = match ft {
-                        FieldType::Blob | FieldType::SpatialObj => FieldValue::Blob(None),
-                        _ => FieldValue::String(None),
-                    };
+                    return Err(YxdbError::ConversionError(format!(
+                        "E2 blob reference in field '{}' has no preceding blob block",
+                        self.fields[i].name
+                    )));
                 }
             }
         }
 
         Ok(values)
+    }
+
+    fn decode_record_values(&self, record_data: &[u8]) -> Result<Vec<FieldValue>> {
+        let preferred = self.decode_record_with_base(record_data, self.integer_base);
+        if !self
+            .fields
+            .iter()
+            .any(|field| field.field_type == FieldType::Int32)
+        {
+            return preferred.map(|(values, _)| values);
+        }
+
+        let alternate_base = if self.integer_base == 5 { 6 } else { 5 };
+        let alternate = self.decode_record_with_base(record_data, alternate_base);
+        match (&preferred, &alternate) {
+            // A record needs no mixed-width recovery only when both uniform
+            // bases frame it exactly and neither reaches 0x09. A failed
+            // uniform parse may still have encountered 0x09 before failing,
+            // so accepting its successful counterpart would hide a distinct
+            // exact mixed-width framing.
+            (Ok((values, false)), Ok((alternate_values, false))) if values == alternate_values => {
+                return Ok(values.clone());
+            }
+            (Ok((values, false)), Ok((alternate_values, false))) => {
+                return Err(self.ambiguous_framing_error(values, alternate_values));
+            }
+            _ => {
+                // At least one uniform parse is incomplete or reaches the
+                // observed 0x09 width ambiguity. Search its per-field
+                // alternatives below instead of choosing an exact but
+                // potentially wrong value.
+            }
+        }
+
+        // Search from both uniform bases. A successful base-6 parse can
+        // otherwise hide a base-5 parse that reaches 0x09 and has a distinct
+        // exact mixed-width framing.
+        let mut candidates = self.decode_record_adaptive(record_data, self.integer_base)?;
+        let alternate_candidates = self.decode_record_adaptive(record_data, alternate_base)?;
+        for candidate in alternate_candidates {
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+        match candidates.len() {
+            0 => Err(YxdbError::ConversionError(
+                "E2 record does not match its declared schema using any exact Int32 framing".into(),
+            )),
+            1 => Ok(candidates.into_iter().next().unwrap()),
+            _ => Err(self.ambiguous_framing_error(&candidates[0], &candidates[1])),
+        }
+    }
+
+    fn ambiguous_framing_error(&self, first: &[FieldValue], second: &[FieldValue]) -> YxdbError {
+        let differing: Vec<&str> = self
+            .fields
+            .iter()
+            .zip(first.iter().zip(second))
+            .filter_map(|(field, (left, right))| (left != right).then_some(field.name.as_str()))
+            .collect();
+        YxdbError::ConversionError(format!(
+            "E2 record has multiple exact Int32 framings with different values{}",
+            if differing.is_empty() {
+                String::new()
+            } else {
+                format!(" in field(s): {}", differing.join(", "))
+            }
+        ))
+    }
+
+    fn decode_record_with_base(
+        &self,
+        record_data: &[u8],
+        integer_base: u8,
+    ) -> Result<(Vec<FieldValue>, bool)> {
+        let mut offset = 0;
+        let mut values = Vec::with_capacity(self.fields.len());
+        let mut is_first_date = true;
+        let mut saw_ambiguous_int32 = false;
+
+        for field in &self.fields {
+            let is_date = field.field_type == FieldType::Date;
+            saw_ambiguous_int32 |=
+                field.field_type == FieldType::Int32 && record_data.get(offset) == Some(&0x09);
+            let result = record::decode_field(
+                record_data,
+                offset,
+                field.field_type,
+                is_date && is_first_date,
+                self.has_date_flag,
+                integer_base,
+            );
+
+            let (val, consumed) = result.map_err(|e| {
+                YxdbError::ConversionError(format!(
+                    "E2 decode error in field '{}' (offset {offset}): {e}",
+                    field.name
+                ))
+            })?;
+            offset += consumed;
+            values.push(val);
+
+            if is_date {
+                is_first_date = false;
+            }
+        }
+
+        if offset != record_data.len() {
+            return Err(YxdbError::ConversionError(format!(
+                "E2 record has {} trailing byte(s) after its declared fields",
+                record_data.len() - offset
+            )));
+        }
+
+        Ok((values, saw_ambiguous_int32))
+    }
+
+    fn decode_record_adaptive(
+        &self,
+        record_data: &[u8],
+        integer_base: u8,
+    ) -> Result<Vec<Vec<FieldValue>>> {
+        if self.fields.len() > MAX_AMBIGUITY_FIELDS {
+            return Err(YxdbError::ConversionError(format!(
+                "E2 mixed-width Int32 recovery is limited to {MAX_AMBIGUITY_FIELDS} fields \
+                 (record schema has {})",
+                self.fields.len()
+            )));
+        }
+
+        let mut failed_states = std::collections::HashSet::new();
+        let mut states_examined = 0usize;
+        let mut candidates = Vec::with_capacity(2);
+        self.decode_record_adaptive_from(
+            record_data,
+            0,
+            0,
+            true,
+            integer_base,
+            Vec::with_capacity(self.fields.len()),
+            &mut failed_states,
+            &mut states_examined,
+            &mut candidates,
+        )?;
+        Ok(candidates)
+    }
+
+    // Recursive search carries branch-local decoding state and shared search limits.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_record_adaptive_from(
+        &self,
+        record_data: &[u8],
+        field_index: usize,
+        offset: usize,
+        is_first_date: bool,
+        integer_base: u8,
+        values: Vec<FieldValue>,
+        failed_states: &mut std::collections::HashSet<(usize, usize, bool)>,
+        states_examined: &mut usize,
+        candidates: &mut Vec<Vec<FieldValue>>,
+    ) -> Result<bool> {
+        if candidates.len() >= 2 {
+            return Ok(true);
+        }
+        *states_examined += 1;
+        if *states_examined > MAX_AMBIGUITY_STATES {
+            return Err(YxdbError::ConversionError(format!(
+                "E2 Int32 ambiguity search exceeded {MAX_AMBIGUITY_STATES} states"
+            )));
+        }
+
+        if field_index == self.fields.len() {
+            if offset == record_data.len() && !candidates.contains(&values) {
+                candidates.push(values);
+            }
+            return Ok(offset == record_data.len());
+        }
+        if failed_states.contains(&(field_index, offset, is_first_date)) {
+            return Ok(false);
+        }
+
+        let field = &self.fields[field_index];
+        let is_date = field.field_type == FieldType::Date;
+        let bases: &[u8] = if field.field_type == FieldType::Int32
+            && offset < record_data.len()
+            && record_data[offset] == 0x09
+        {
+            if integer_base == 5 {
+                &[5, 6]
+            } else {
+                &[6, 5]
+            }
+        } else {
+            &[integer_base]
+        };
+
+        let mut alternatives = Vec::with_capacity(bases.len());
+        for &base in bases {
+            let Ok((value, consumed)) = record::decode_field(
+                record_data,
+                offset,
+                field.field_type,
+                is_date && is_first_date,
+                self.has_date_flag,
+                base,
+            ) else {
+                continue;
+            };
+            if !alternatives.contains(&(value.clone(), consumed)) {
+                alternatives.push((value, consumed));
+            }
+        }
+
+        let candidates_before = candidates.len();
+        let mut found = false;
+        for (value, consumed) in alternatives {
+            let mut next_values = values.clone();
+            next_values.push(value);
+            found |= self.decode_record_adaptive_from(
+                record_data,
+                field_index + 1,
+                offset + consumed,
+                is_first_date && !is_date,
+                integer_base,
+                next_values,
+                failed_states,
+                states_examined,
+                candidates,
+            )?;
+            if candidates.len() >= 2 {
+                break;
+            }
+        }
+        if candidates.len() == candidates_before && !found {
+            failed_states.insert((field_index, offset, is_first_date));
+        }
+        Ok(found)
     }
 }
 
@@ -732,51 +972,6 @@ enum Block {
     Record(Vec<u8>),
     /// Blob block: (file_offset_of_block_start, decompressed_data)
     Blob(usize, Vec<u8>),
-}
-
-/// Try to skip an extra Int64 value at the given offset.
-///
-/// Some files contain undocumented Int64 fields not declared in the XML
-/// metadata (see spec finding #10). Returns the number of bytes consumed
-/// if the prefix is a valid compact Int64 encoding (base 6, null 0x4A).
-fn try_skip_extra_int64(data: &[u8], offset: usize) -> Option<usize> {
-    if offset >= data.len() {
-        return None;
-    }
-    let prefix = data[offset];
-    // Int64 compact: base=6, null=0x4A
-    // 0x00-0x05: below-base null (1 byte)
-    // 0x06: zero value (1 byte)
-    // 0x07-0x0E: 1-8 data bytes
-    // 0x4A: type-specific null (1 byte)
-    if prefix == 0x4A || prefix <= 0x06 {
-        return Some(1);
-    }
-    if (0x07..=0x0E).contains(&prefix) {
-        let n_bytes = (prefix - 0x06) as usize;
-        let end = offset + 1 + n_bytes;
-        if end <= data.len() {
-            return Some(1 + n_bytes);
-        }
-    }
-    None
-}
-
-/// Return a null FieldValue appropriate for the given field type.
-fn null_field_value(ft: FieldType) -> FieldValue {
-    match ft {
-        FieldType::Bool => FieldValue::Bool(None),
-        FieldType::Byte => FieldValue::Byte(None),
-        FieldType::Int16 => FieldValue::Int16(None),
-        FieldType::Int32 => FieldValue::Int32(None),
-        FieldType::Int64 => FieldValue::Int64(None),
-        FieldType::Float => FieldValue::Float(None),
-        FieldType::Double => FieldValue::Double(None),
-        FieldType::Date => FieldValue::Date(None),
-        FieldType::DateTime => FieldValue::DateTime(None),
-        FieldType::Time => FieldValue::Time(None),
-        _ => FieldValue::String(None),
-    }
 }
 
 /// Convert a column of FieldValues to a Polars Series.
@@ -970,8 +1165,12 @@ mod tests {
     /// Encode an `Int32` field value in the compact integer encoding
     /// (`base + value_byte_count`, then that many little-endian value bytes).
     fn enc_i32(v: i32) -> Vec<u8> {
+        enc_i32_with_base(v, 6)
+    }
+
+    fn enc_i32_with_base(v: i32, base: u8) -> Vec<u8> {
         if v == 0 {
-            return vec![6];
+            return vec![base];
         }
         let le = v.to_le_bytes();
         let n = if v < 0 {
@@ -979,7 +1178,7 @@ mod tests {
         } else {
             4 - le.iter().rev().take_while(|b| **b == 0).count()
         };
-        let mut out = vec![6 + n as u8];
+        let mut out = vec![base + n as u8];
         out.extend_from_slice(&le[..n]);
         out
     }
@@ -1146,6 +1345,243 @@ mod tests {
         assert_eq!(df.get_column_names(), vec!["s", "x"]);
         assert_eq!(df.height(), 2);
         assert_eq!(int_column(&df), vec![1, 2]);
+    }
+
+    #[test]
+    fn detects_base_five_in_mixed_type_records() {
+        let records = vec![
+            [enc_i32_with_base(123_456, 5), enc_str("one")].concat(),
+            [enc_i32_with_base(654_321, 5), enc_str("two")].concat(),
+        ];
+        let file = write_e2_file(TWO_COL_XML, &[records]);
+
+        let df = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe()
+            .unwrap();
+
+        assert_eq!(int_column(&df), vec![123_456, 654_321]);
+        let strings: Vec<_> = df
+            .column("s")
+            .unwrap()
+            .str()
+            .unwrap()
+            .into_no_null_iter()
+            .collect();
+        assert_eq!(strings, vec!["one", "two"]);
+    }
+
+    #[test]
+    fn decodes_mixed_int32_widths_within_one_record() {
+        let xml = r#"<RecordInfo><Field name="annual" type="Int32" size="4" /><Field name="weekly" type="Int32" size="4" /></RecordInfo>"#;
+        // 0x09 has an observed padded four-byte form for 1,560,000, while
+        // the next value uses the normal base-6 two-byte form for 30,000.
+        // A file-wide base cannot decode this framed record correctly.
+        let file = write_e2_file(
+            xml,
+            &[vec![vec![0x09, 0xC0, 0xCD, 0x17, 0x00, 0x08, 0x30, 0x75]]],
+        );
+
+        let df = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe()
+            .unwrap();
+
+        assert_eq!(
+            df.column("annual")
+                .unwrap()
+                .i32()
+                .unwrap()
+                .into_no_null_iter()
+                .collect::<Vec<_>>(),
+            vec![1_560_000]
+        );
+        assert_eq!(
+            df.column("weekly")
+                .unwrap()
+                .i32()
+                .unwrap()
+                .into_no_null_iter()
+                .collect::<Vec<_>>(),
+            vec![30_000]
+        );
+    }
+
+    #[test]
+    fn rejects_value_distinct_exact_int32_framings() {
+        let xml = r#"<RecordInfo><Field name="first" type="Int32" size="4" /><Field name="second" type="Int32" size="4" /></RecordInfo>"#;
+        // Under base 6, the first 0x09 takes three payload bytes and the 0x08
+        // at byte 4 starts the second field. Under base 5, it takes four and
+        // the 0x07 at byte 5 starts the second field. Both parses consume all
+        // seven bytes, but they produce different integer pairs.
+        let file = write_e2_file(xml, &[vec![vec![0x09, 1, 2, 3, 0x08, 0x07, 4]]]);
+
+        let err = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe()
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("multiple exact Int32 framings"), "{msg}");
+        assert!(msg.contains("first"), "{msg}");
+        assert!(msg.contains("second"), "{msg}");
+    }
+
+    #[test]
+    fn rejects_0x09_alternative_after_uniform_parse_succeeds() {
+        let xml = r#"<RecordInfo><Field name="first" type="Int32" size="4" /><Field name="second" type="Int32" size="4" /><Field name="text" type="V_String" size="64" /></RecordInfo>"#;
+        // Base 6 has an exact parse with no 0x09 field prefix:
+        //   0x08 [01 02], 0x08 [09 03], 0x85 [04 05 82 0A 0B].
+        // Base 5 also frames exactly, reaching 0x09 at the second Int32:
+        //   0x08 [01 02 08], 0x09 [03 85 04 05], 0x82 [0A 0B].
+        // The successful uniform base-6 parse must not hide this distinct
+        // observed 0x09 alternative.
+        let file = write_e2_file(
+            xml,
+            &[vec![vec![
+                0x08, 0x01, 0x02, 0x08, 0x09, 0x03, 0x85, 0x04, 0x05, 0x82, 0x0A, 0x0B,
+            ]]],
+        );
+
+        let err = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe()
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("multiple exact Int32 framings"), "{msg}");
+        assert!(msg.contains("first"), "{msg}");
+        assert!(msg.contains("second"), "{msg}");
+        assert!(msg.contains("text"), "{msg}");
+    }
+
+    #[test]
+    fn rejects_mixed_framing_after_alternate_uniform_parse_fails() {
+        let xml = r#"<RecordInfo><Field name="first" type="Int32" size="4" /><Field name="second" type="Int32" size="4" /><Field name="third" type="Int32" size="4" /></RecordInfo>"#;
+        // Base 6 has an exact uniform parse with no 0x09 field prefix.
+        // Base 5 reaches 0x09 at the second field but fails uniformly. Its
+        // base-6 0x09 alternative followed by a base-5 third field is also
+        // exact, with different values, so the record is ambiguous.
+        let file = write_e2_file(
+            xml,
+            &[vec![vec![0x07, 0x01, 0x08, 0x09, 0x02, 0x08, 0x03, 0x05]]],
+        );
+
+        let err = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe()
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("multiple exact Int32 framings"), "{msg}");
+        assert!(msg.contains("first"), "{msg}");
+        assert!(msg.contains("second"), "{msg}");
+        assert!(msg.contains("third"), "{msg}");
+    }
+
+    #[test]
+    fn rejects_value_distinct_uniform_int32_framings() {
+        let xml = r#"<RecordInfo><Field name="number" type="Int32" size="4" /><Field name="text" type="V_String" size="64" /></RecordInfo>"#;
+        // Both base-6 and base-5 parses consume the whole record without
+        // reaching 0x09, but their Int32 and string boundaries differ.
+        let file = write_e2_file(xml, &[vec![vec![0x07, 0x01, 0x82, 0x81, b'B']]]);
+
+        let err = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe()
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("multiple exact Int32 framings"), "{msg}");
+        assert!(msg.contains("number"), "{msg}");
+        assert!(msg.contains("text"), "{msg}");
+    }
+
+    #[test]
+    fn unresolved_blob_reference_is_an_error() {
+        let xml = r#"<RecordInfo><Field name="payload" type="V_String" size="64" /></RecordInfo>"#;
+        let mut reference = vec![0x11];
+        reference.extend_from_slice(&0u32.to_le_bytes());
+        reference.extend_from_slice(&4u32.to_le_bytes());
+        let file = write_e2_file(xml, &[vec![reference]]);
+
+        let err = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe()
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("payload"), "{msg}");
+        assert!(msg.contains("no preceding blob block"), "{msg}");
+    }
+
+    #[test]
+    fn blob_reference_uses_most_recent_blob_block() {
+        let xml = r#"<RecordInfo><Field name="payload" type="V_String" size="64" /></RecordInfo>"#;
+        let file = write_e2_file(xml, &[vec![enc_str("placeholder")]]);
+        let mut reader = E2Reader::open(file.path()).unwrap();
+        reader.blob_blocks.insert(100, b"older".to_vec());
+        reader.blob_blocks.insert(200, b"latest-value".to_vec());
+        reader.last_blob_offset = Some(200);
+
+        let mut reference = vec![0x11];
+        reference.extend_from_slice(&0u32.to_le_bytes());
+        reference.extend_from_slice(&6u32.to_le_bytes());
+        assert_eq!(
+            reader.decode_record(&reference).unwrap(),
+            vec![FieldValue::String(Some("latest".to_owned()))]
+        );
+    }
+
+    #[test]
+    fn decode_failure_is_returned_instead_of_an_all_null_row() {
+        let xml = r#"<RecordInfo><Field name="x" type="Bool" size="1" /></RecordInfo>"#;
+        let file = write_e2_file(xml, &[vec![vec![0xFF]]]);
+
+        let err = E2Reader::open(file.path())
+            .unwrap()
+            .into_dataframe()
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("failed to decode record 0"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn e2_corpus_files_decode_to_their_declared_record_count() {
+        let Ok(corpus_root) = std::env::var("YXDB_CORPUS_DIR") else {
+            return;
+        };
+        let corpus_dir = std::path::Path::new(&corpus_root).join("e2");
+
+        let mut paths: Vec<_> = std::fs::read_dir(&corpus_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("yxdb"))
+            })
+            .collect();
+        paths.sort();
+        assert!(
+            !paths.is_empty(),
+            "E2 corpus directory contains no YXDB files"
+        );
+
+        let mut failures = Vec::new();
+        for path in paths {
+            let expected = E2Reader::open(&path).unwrap().count_records().unwrap();
+            let mut reader = E2Reader::open(&path).unwrap();
+            reader.set_allow_unverified(true);
+            match reader.into_dataframe() {
+                Ok(df) if df.height() as u64 == expected => {}
+                Ok(df) => failures.push(format!(
+                    "{}: decoded {} records, expected {expected}",
+                    path.display(),
+                    df.height()
+                )),
+                Err(err) => failures.push(format!("{}: {err}", path.display())),
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     #[test]

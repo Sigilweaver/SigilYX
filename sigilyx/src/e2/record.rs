@@ -81,6 +81,7 @@ pub fn decode_field(
     field_type: FieldType,
     is_first_date_field: bool,
     has_date_flag: bool,
+    integer_base: u8,
 ) -> Result<(FieldValue, usize), DecodeError> {
     if offset >= data.len() {
         return Err(DecodeError::UnexpectedEof);
@@ -104,7 +105,9 @@ pub fn decode_field(
         FieldType::Bool => decode_bool(data, pos),
         FieldType::Byte => decode_compact_int(data, pos, 6, NULL_BYTE, IntTarget::Byte),
         FieldType::Int16 => decode_compact_int(data, pos, 6, NULL_INT16, IntTarget::Int16),
-        FieldType::Int32 => decode_compact_int(data, pos, 6, NULL_INT32, IntTarget::Int32),
+        FieldType::Int32 => {
+            decode_compact_int(data, pos, integer_base, NULL_INT32, IntTarget::Int32)
+        }
         FieldType::Int64 => decode_compact_int(data, pos, 6, NULL_INT64, IntTarget::Int64),
         FieldType::Float => decode_float(data, pos),
         FieldType::Double => decode_double(data, pos),
@@ -120,16 +123,7 @@ pub fn decode_field(
         FieldType::DateTime => decode_datetime(data, pos),
         FieldType::Time => decode_time(data, pos),
 
-        // -- UNVERIFIED TYPES --
-        // The decoders below are speculative. They have NEVER been
-        // validated against real E2 corpus files. The encoding is our
-        // best guess based on E1 patterns and the compact encoding
-        // scheme, but may be completely wrong.
-        // ---
-
-        // UNVERIFIED: FixedDecimal - guessing it uses the same
-        // length-prefixed UTF-8 encoding as V_String, carrying the
-        // ASCII decimal representation (like E1). Null byte 0x4C.
+        // FixedDecimal is packed BCD with an embedded sign and scale.
         FieldType::FixedDecimal => decode_fixed_decimal(data, pos),
 
         // UNVERIFIED: Fixed-width String/WString - E2 may not even
@@ -187,6 +181,17 @@ enum IntTarget {
     Int64,
 }
 
+impl IntTarget {
+    fn byte_width(&self) -> usize {
+        match self {
+            Self::Byte => 1,
+            Self::Int16 => 2,
+            Self::Int32 => 4,
+            Self::Int64 => 8,
+        }
+    }
+}
+
 // -- Bool --
 
 fn decode_bool(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeError> {
@@ -215,12 +220,37 @@ fn decode_compact_int(
         return Ok((int_null(&target), pos + 1));
     }
 
-    // Below-base null
+    // Only the type-specific null marker is valid below the base. Treating
+    // every low prefix as null can manufacture an alternate record framing.
     if prefix < base {
-        return Ok((int_null(&target), pos + 1));
+        return Err(DecodeError::InvalidPrefix(
+            prefix,
+            match target {
+                IntTarget::Byte => FieldType::Byte,
+                IntTarget::Int16 => FieldType::Int16,
+                IntTarget::Int32 => FieldType::Int32,
+                IntTarget::Int64 => FieldType::Int64,
+            },
+        ));
     }
 
     let n_bytes = (prefix - base) as usize;
+
+    // A prefix that declares more bytes than the destination integer can
+    // hold is not a wider spelling of the same value. Accepting it would
+    // consume bytes belonging to the next field and silently truncate the
+    // integer, which can make an incorrectly framed record appear valid.
+    if n_bytes > target.byte_width() {
+        return Err(DecodeError::InvalidPrefix(
+            prefix,
+            match target {
+                IntTarget::Byte => FieldType::Byte,
+                IntTarget::Int16 => FieldType::Int16,
+                IntTarget::Int32 => FieldType::Int32,
+                IntTarget::Int64 => FieldType::Int64,
+            },
+        ));
+    }
 
     // Zero (prefix == base, 0 value bytes)
     if n_bytes == 0 {
@@ -242,19 +272,19 @@ fn decode_compact_int(
         }
         IntTarget::Int16 => {
             let mut buf = [0u8; 2];
-            buf[..n_bytes.min(2)].copy_from_slice(&val_bytes[..n_bytes.min(2)]);
+            buf[..n_bytes].copy_from_slice(val_bytes);
             let v = i16::from_le_bytes(buf);
             Ok((FieldValue::Int16(Some(v)), end))
         }
         IntTarget::Int32 => {
             let mut buf = [0u8; 4];
-            buf[..n_bytes.min(4)].copy_from_slice(&val_bytes[..n_bytes.min(4)]);
+            buf[..n_bytes].copy_from_slice(val_bytes);
             let v = i32::from_le_bytes(buf);
             Ok((FieldValue::Int32(Some(v)), end))
         }
         IntTarget::Int64 => {
             let mut buf = [0u8; 8];
-            buf[..n_bytes.min(8)].copy_from_slice(&val_bytes[..n_bytes.min(8)]);
+            buf[..n_bytes].copy_from_slice(val_bytes);
             let v = i64::from_le_bytes(buf);
             Ok((FieldValue::Int64(Some(v)), end))
         }
@@ -289,9 +319,9 @@ fn decode_float(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeEr
         return Ok((FieldValue::Float(None), pos + 1));
     }
 
-    // Below-base null (base = 7; prefixes 0x00..0x06 are null)
+    // Other below-base prefixes are malformed, not alternative nulls.
     if prefix < 0x07 {
-        return Ok((FieldValue::Float(None), pos + 1));
+        return Err(DecodeError::InvalidPrefix(prefix, FieldType::Float));
     }
 
     // Base prefix = zero
@@ -299,15 +329,17 @@ fn decode_float(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeEr
         return Ok((FieldValue::Float(Some(0.0)), pos + 1));
     }
 
-    let n_bytes = (prefix - 0x07) as usize; // 1..4
+    let n_bytes = (prefix - 0x07) as usize;
+    if n_bytes > 4 {
+        return Err(DecodeError::InvalidPrefix(prefix, FieldType::Float));
+    }
     let end = pos + 1 + n_bytes;
     if end > data.len() {
         return Err(DecodeError::UnexpectedEof);
     }
 
     let mut buf = [0u8; 4];
-    let copy_len = n_bytes.min(4);
-    buf[..copy_len].copy_from_slice(&data[pos + 1..pos + 1 + copy_len]);
+    buf[..n_bytes].copy_from_slice(&data[pos + 1..pos + 1 + n_bytes]);
     let v = f32::from_le_bytes(buf);
     Ok((FieldValue::Float(Some(v)), end))
 }
@@ -322,9 +354,9 @@ fn decode_double(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeE
         return Ok((FieldValue::Double(None), pos + 1));
     }
 
-    // Below zero prefix: null (prefixes 0x00..0x05)
+    // Other below-base prefixes are malformed, not alternative nulls.
     if prefix < 0x06 {
-        return Ok((FieldValue::Double(None), pos + 1));
+        return Err(DecodeError::InvalidPrefix(prefix, FieldType::Double));
     }
 
     // Zero prefix (0x06) - special case: value is 0.0, no data bytes
@@ -334,14 +366,16 @@ fn decode_double(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeE
 
     // Data bytes: n = prefix - 4 (prefixes 0x07..0x0C → 3..8 bytes)
     let n_bytes = (prefix - 0x04) as usize;
+    if !(3..=8).contains(&n_bytes) {
+        return Err(DecodeError::InvalidPrefix(prefix, FieldType::Double));
+    }
     let end = pos + 1 + n_bytes;
     if end > data.len() {
         return Err(DecodeError::UnexpectedEof);
     }
 
     let mut buf = [0u8; 8];
-    let copy_len = n_bytes.min(8);
-    buf[..copy_len].copy_from_slice(&data[pos + 1..pos + 1 + copy_len]);
+    buf[..n_bytes].copy_from_slice(&data[pos + 1..pos + 1 + n_bytes]);
     let v = f64::from_le_bytes(buf);
     Ok((FieldValue::Double(Some(v)), end))
 }
@@ -410,55 +444,58 @@ fn decode_string(
     Err(DecodeError::InvalidPrefix(prefix, FieldType::VString))
 }
 
-// -- FixedDecimal (UNVERIFIED) --
+// -- FixedDecimal --
 //
-// WARNING: This decoder has NEVER been validated against real E2 data.
-// We guess FixedDecimal uses the same length-prefixed UTF-8 encoding as
-// V_String, carrying the ASCII decimal text (e.g. "123.456789") that
-// E1 stores in fixed-width fields. The null byte 0x4C is predicted from
-// the 0x40+type_code pattern (type_code=12) but ALSO collides with the
-// alternate Double null. If this guess is wrong, decoding will produce
-// garbage or errors.
+// Packed BCD: [0x04 marker] [prefix] [sign|scale] [BCD data]. The prefix
+// gives both the significant-digit count and the packed-data byte count.
 
 fn decode_fixed_decimal(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeError> {
     let prefix = data[pos];
 
-    // Type-specific null (UNVERIFIED)
-    if prefix == NULL_FIXED_DECIMAL {
+    if prefix == 0x00 || prefix == NULL_FIXED_DECIMAL {
         return Ok((FieldValue::Decimal(None), pos + 1));
     }
 
-    // Null: below-base (UNVERIFIED - assuming same 0x00 as V_String)
-    if prefix == 0x00 {
-        return Ok((FieldValue::Decimal(None), pos + 1));
+    if prefix != 0x04 || pos + 3 > data.len() {
+        return Err(DecodeError::InvalidPrefix(prefix, FieldType::FixedDecimal));
     }
 
-    // Short string: prefix = 0x80 | len
-    if prefix & 0x80 != 0 {
-        let len = (prefix & 0x7F) as usize;
-        let end = pos + 1 + len;
-        if end > data.len() {
-            return Err(DecodeError::UnexpectedEof);
-        }
-        let s = String::from_utf8_lossy(&data[pos + 1..end]).into_owned();
-        return Ok((FieldValue::Decimal(Some(s)), end));
+    let digit_prefix = data[pos + 1] as usize;
+    let sign_scale = data[pos + 2];
+    let data_bytes = digit_prefix / 2 + 1;
+    let end = pos + 3 + data_bytes;
+    if end > data.len() {
+        return Err(DecodeError::UnexpectedEof);
     }
 
-    // Long string: prefix = 0x01 + u16 LE len
-    if prefix == 0x01 {
-        if pos + 3 > data.len() {
-            return Err(DecodeError::UnexpectedEof);
+    let mut digits = String::with_capacity(digit_prefix + 1);
+    for i in 0..=digit_prefix {
+        let byte = data[pos + 3 + i / 2];
+        let nibble = if i % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+        if nibble > 9 {
+            return Err(DecodeError::InvalidPrefix(nibble, FieldType::FixedDecimal));
         }
-        let len = u16::from_le_bytes(data[pos + 1..pos + 3].try_into().unwrap()) as usize;
-        let end = pos + 3 + len;
-        if end > data.len() {
-            return Err(DecodeError::UnexpectedEof);
-        }
-        let s = String::from_utf8_lossy(&data[pos + 3..end]).into_owned();
-        return Ok((FieldValue::Decimal(Some(s)), end));
+        digits.push(char::from(b'0' + nibble));
     }
 
-    Err(DecodeError::InvalidPrefix(prefix, FieldType::FixedDecimal))
+    let significant = digits.trim_start_matches('0');
+    let mut decimal = if significant.is_empty() {
+        "0".to_owned()
+    } else {
+        significant.to_owned()
+    };
+    let scale = (sign_scale & 0x7F) as usize;
+    if scale > 0 {
+        if decimal.len() <= scale {
+            decimal = format!("{:0>width$}", decimal, width = scale + 1);
+        }
+        decimal.insert(decimal.len() - scale, '.');
+    }
+    if sign_scale & 0x80 != 0 && decimal != "0" {
+        decimal.insert(0, '-');
+    }
+
+    Ok((FieldValue::Decimal(Some(decimal)), end))
 }
 
 // -- Blob --
@@ -599,9 +636,9 @@ fn decode_date(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeErr
         return Ok((FieldValue::Date(None), pos + 1));
     }
 
-    // Below-base null (base = 0x0A)
+    // Other below-base prefixes are malformed, not alternative nulls.
     if prefix < 0x0A {
-        return Ok((FieldValue::Date(None), pos + 1));
+        return Err(DecodeError::InvalidPrefix(prefix, FieldType::Date));
     }
 
     // Zero (base prefix)
@@ -611,15 +648,17 @@ fn decode_date(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeErr
         return Ok((FieldValue::Date(Some(s)), pos + 1));
     }
 
-    let n_bytes = (prefix - 0x0A) as usize; // 1..4
+    let n_bytes = (prefix - 0x0A) as usize;
+    if n_bytes > 4 {
+        return Err(DecodeError::InvalidPrefix(prefix, FieldType::Date));
+    }
     let end = pos + 1 + n_bytes;
     if end > data.len() {
         return Err(DecodeError::UnexpectedEof);
     }
 
     let mut buf = [0u8; 4];
-    let copy_len = n_bytes.min(4);
-    buf[..copy_len].copy_from_slice(&data[pos + 1..pos + 1 + copy_len]);
+    buf[..n_bytes].copy_from_slice(&data[pos + 1..pos + 1 + n_bytes]);
     let day_serial = u32::from_le_bytes(buf) as i64;
     let s = day_serial_to_date_str(day_serial);
     Ok((FieldValue::Date(Some(s)), end))
@@ -635,9 +674,9 @@ fn decode_datetime(data: &[u8], pos: usize) -> Result<(FieldValue, usize), Decod
         return Ok((FieldValue::DateTime(None), pos + 1));
     }
 
-    // Below-base null (base = 8)
+    // Other below-base prefixes are malformed, not alternative nulls.
     if prefix < 0x08 {
-        return Ok((FieldValue::DateTime(None), pos + 1));
+        return Err(DecodeError::InvalidPrefix(prefix, FieldType::DateTime));
     }
 
     // Zero (base prefix)
@@ -646,16 +685,18 @@ fn decode_datetime(data: &[u8], pos: usize) -> Result<(FieldValue, usize), Decod
         return Ok((FieldValue::DateTime(Some(s)), pos + 1));
     }
 
-    let n_bytes = (prefix - 0x08) as usize; // 1..6
+    let n_bytes = (prefix - 0x08) as usize;
+    if n_bytes > 6 {
+        return Err(DecodeError::InvalidPrefix(prefix, FieldType::DateTime));
+    }
     let end = pos + 1 + n_bytes;
     if end > data.len() {
         return Err(DecodeError::UnexpectedEof);
     }
 
-    // Read up to 6 bytes into a u64
+    // Read the documented 1..=6 bytes into a u64.
     let mut buf = [0u8; 8];
-    let copy_len = n_bytes.min(6);
-    buf[..copy_len].copy_from_slice(&data[pos + 1..pos + 1 + copy_len]);
+    buf[..n_bytes].copy_from_slice(&data[pos + 1..pos + 1 + n_bytes]);
     let raw = u64::from_le_bytes(buf);
     let s = datetime_packed_to_str(raw);
     Ok((FieldValue::DateTime(Some(s)), end))
@@ -671,9 +712,9 @@ fn decode_time(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeErr
         return Ok((FieldValue::Time(None), pos + 1));
     }
 
-    // Below-base null (predicted base = 0x0C)
+    // Other below-base prefixes are malformed, not alternative nulls.
     if prefix < 0x0C {
-        return Ok((FieldValue::Time(None), pos + 1));
+        return Err(DecodeError::InvalidPrefix(prefix, FieldType::Time));
     }
 
     // Zero (base prefix)
@@ -682,14 +723,16 @@ fn decode_time(data: &[u8], pos: usize) -> Result<(FieldValue, usize), DecodeErr
     }
 
     let n_bytes = (prefix - 0x0C) as usize;
+    if n_bytes > 4 {
+        return Err(DecodeError::InvalidPrefix(prefix, FieldType::Time));
+    }
     let end = pos + 1 + n_bytes;
     if end > data.len() {
         return Err(DecodeError::UnexpectedEof);
     }
 
     let mut buf = [0u8; 4];
-    let copy_len = n_bytes.min(4);
-    buf[..copy_len].copy_from_slice(&data[pos + 1..pos + 1 + copy_len]);
+    buf[..n_bytes].copy_from_slice(&data[pos + 1..pos + 1 + n_bytes]);
     let centiseconds = u32::from_le_bytes(buf) as u64;
     let s = centiseconds_to_time_str(centiseconds);
     Ok((FieldValue::Time(Some(s)), end))
@@ -795,11 +838,15 @@ mod tests {
     }
 
     #[test]
-    fn decode_int32_null_below_base() {
-        assert_eq!(
-            decode_compact_int(&[0x05], 0, 6, NULL_INT32, IntTarget::Int32).unwrap(),
-            (FieldValue::Int32(None), 1)
-        );
+    fn decode_int32_rejects_non_null_prefix_below_base() {
+        assert!(matches!(
+            decode_compact_int(&[0x05], 0, 6, NULL_INT32, IntTarget::Int32),
+            Err(DecodeError::InvalidPrefix(0x05, FieldType::Int32))
+        ));
+        assert!(matches!(
+            decode_compact_int(&[0x04], 0, 5, NULL_INT32, IntTarget::Int32),
+            Err(DecodeError::InvalidPrefix(0x04, FieldType::Int32))
+        ));
     }
 
     #[test]
@@ -808,6 +855,64 @@ mod tests {
             decode_compact_int(&[NULL_INT32], 0, 6, NULL_INT32, IntTarget::Int32).unwrap(),
             (FieldValue::Int32(None), 1)
         );
+    }
+
+    #[test]
+    fn decode_int32_rejects_payload_wider_than_type() {
+        let err = decode_compact_int(&[0x0B, 1, 2, 3, 4, 5], 0, 6, NULL_INT32, IntTarget::Int32)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            DecodeError::InvalidPrefix(0x0B, FieldType::Int32)
+        ));
+    }
+
+    #[test]
+    fn scalar_decoders_reject_non_null_prefixes_below_their_base() {
+        assert!(matches!(
+            decode_float(&[0x06], 0),
+            Err(DecodeError::InvalidPrefix(0x06, FieldType::Float))
+        ));
+        assert!(matches!(
+            decode_double(&[0x05], 0),
+            Err(DecodeError::InvalidPrefix(0x05, FieldType::Double))
+        ));
+        assert!(matches!(
+            decode_date(&[0x09], 0),
+            Err(DecodeError::InvalidPrefix(0x09, FieldType::Date))
+        ));
+        assert!(matches!(
+            decode_datetime(&[0x07], 0),
+            Err(DecodeError::InvalidPrefix(0x07, FieldType::DateTime))
+        ));
+        assert!(matches!(
+            decode_time(&[0x0B], 0),
+            Err(DecodeError::InvalidPrefix(0x0B, FieldType::Time))
+        ));
+    }
+
+    #[test]
+    fn scalar_decoders_reject_payloads_wider_than_their_wire_type() {
+        assert!(matches!(
+            decode_float(&[0x0C], 0),
+            Err(DecodeError::InvalidPrefix(0x0C, FieldType::Float))
+        ));
+        assert!(matches!(
+            decode_double(&[0x0D], 0),
+            Err(DecodeError::InvalidPrefix(0x0D, FieldType::Double))
+        ));
+        assert!(matches!(
+            decode_date(&[0x0F], 0),
+            Err(DecodeError::InvalidPrefix(0x0F, FieldType::Date))
+        ));
+        assert!(matches!(
+            decode_datetime(&[0x0F], 0),
+            Err(DecodeError::InvalidPrefix(0x0F, FieldType::DateTime))
+        ));
+        assert!(matches!(
+            decode_time(&[0x11], 0),
+            Err(DecodeError::InvalidPrefix(0x11, FieldType::Time))
+        ));
     }
 
     #[test]
@@ -871,6 +976,18 @@ mod tests {
         let (val, end) = decode_string(&data, 0, NULL_VSTRING).unwrap();
         assert_eq!(val, FieldValue::String(Some(text)));
         assert_eq!(end, 3 + 200);
+    }
+
+    #[test]
+    fn decode_fixed_decimal_packed_bcd() {
+        let (value, consumed) =
+            decode_fixed_decimal(&[0x04, 0x09, 0x06, 0x24, 0x25, 0, 0, 0], 0).unwrap();
+        assert_eq!(value, FieldValue::Decimal(Some("2425.000000".to_owned())));
+        assert_eq!(consumed, 8);
+
+        let (value, consumed) = decode_fixed_decimal(&[0x04, 0x01, 0x80, 0x24], 0).unwrap();
+        assert_eq!(value, FieldValue::Decimal(Some("-24".to_owned())));
+        assert_eq!(consumed, 4);
     }
 
     #[test]

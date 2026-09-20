@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-19
+
+### Fixed
+
+- E2 reads now fail with the record number and field name when a record cannot
+  be decoded. They no longer silently substitute an all-null row, which could
+  make corrupt or unsupported data appear to load successfully.
+- E2 scalar decoders reject invalid compact prefixes and payload widths rather
+  than treating them as null or truncating bytes that belong to the next
+  field.
+- E2 `FixedDecimal` values now decode from their packed-BCD representation,
+  including embedded sign and scale metadata.
+- E2 Int32 framing supports the observed base-5 and padded `0x09` variants
+  through a bounded search. Multiple exact framings with different values now
+  raise an error instead of selecting an arbitrary interpretation.
+- Unresolved E2 blob references now raise an error. A `0x11` reference uses
+  the most recently read blob block, consistent with the file format.
+
+### Testing
+
+- Set `YXDB_CORPUS_DIR` to a corpus root containing an `e2/` directory to run
+  the E2 streaming tests. Successful files must agree between eager and batch
+  reads; reviewed unsupported inputs are pinned by SHA-256 and must continue
+  to raise their expected errors.
+
 ## [0.4.0] - 2026-08-25
 
 ### Added

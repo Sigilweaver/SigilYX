@@ -12,7 +12,7 @@
 
 [YXDB](SPECIFICATION-E1.md) is the native binary format used by [Alteryx](https://www.alteryx.com/) Designer. SigilYX is a standalone, cross-platform library that reads and writes `.yxdb` files. The core is written in Rust; Python bindings are built on top with [PyO3](https://pyo3.rs/) and integrate with [Polars](https://pola.rs/), [PyArrow](https://arrow.apache.org/docs/python/), and [Pandas](https://pandas.pydata.org/).
 
-> **Format scope:** Full read/write support for the **E1** (original engine) YXDB layout. **Experimental** read support for **E2** (AMP engine) is included: 13 field types have been verified against real E2 files; 4 rarer types (Blob, SpatialObj, Time, WString) have speculative decoders behind an opt-in flag. E2 writing is not yet supported. See [SPECIFICATION-E1.md](SPECIFICATION-E1.md) and [SPECIFICATION-E2.md](SPECIFICATION-E2.md).
+> **Format scope:** Full read/write support for the **E1** (original engine) YXDB layout. **Experimental** read support for **E2** (AMP engine) is included: 15 field types have been verified against real E2 files; the rarer Time and WString types retain speculative decoders behind an opt-in flag. E2 writing is not yet supported. E2 records that cannot be decoded raise an error rather than silently becoming null rows. See [SPECIFICATION-E1.md](SPECIFICATION-E1.md) and [SPECIFICATION-E2.md](SPECIFICATION-E2.md).
 
 ## Packages
 

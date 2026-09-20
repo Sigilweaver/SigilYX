@@ -11,6 +11,7 @@ subdirectories. Tests skip when the corpus is unavailable.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -33,6 +34,78 @@ def corpus_files(layout: str) -> list[Path]:
 
 E1_FILES = corpus_files("e1")
 E2_FILES = corpus_files("e2")
+
+# These payloads have more than one exact Int32 framing, or bytes not covered
+# by their declared schema. Strict E2 reads must reject them. Pin both the
+# immutable content hash and complete public error so a changed failure, an
+# unexpected success, or a new unsupported payload receives review.
+KNOWN_E2_STRICT_ERRORS: dict[str, str] = {
+    "0016c205e7983f71438dcbd22101cdf559a0b3dcb7640e9d13db7c6aff535d48": (
+        "data conversion error: E2 failed to decode record 5: data conversion error: "
+        "E2 record has multiple exact Int32 framings with different values in field(s): row, column"
+    ),
+    "1099621aa7f5ba0fe48a1377d3146dc5ecd21f07476e0c71a21e404c8a7d9fcf": (
+        "data conversion error: E2 failed to decode record 5: data conversion error: "
+        "E2 record has multiple exact Int32 framings with different values in field(s): Row, Col"
+    ),
+    "5eeddc560976e28ca8a1302887a6e5d667f0bde996dc58bc779040c4bc5dddb3": (
+        "data conversion error: E2 failed to decode record 68: data conversion error: "
+        "E2 record has multiple exact Int32 framings with different values in field(s): Patient Age, Length of Stay"
+    ),
+    "6a41c1522c60d1d2b778fd7a3c3d220163b46219f966329747ce67cdd4d999f4": (
+        "data conversion error: E2 failed to decode record 48789: data conversion error: "
+        "E2 record has multiple exact Int32 framings with different values in field(s): Record_ID, Store"
+    ),
+    "7ab36db86d50b3aec6ec6620a3098a8c8b1a9fe031dd7b87359e4d3816cea66f": (
+        "data conversion error: E2 failed to decode record 4537: data conversion error: "
+        "E2 record has multiple exact Int32 framings with different values in field(s): "
+        "SequenceNumber, Master Patient ID, PatientAge, LOS"
+    ),
+    "7dfb79432fde920670425606f24229afd713e82e165875469814cd917faf76c3": (
+        "data conversion error: E2 failed to decode record 41: data conversion error: "
+        "E2 record has multiple exact Int32 framings with different values in field(s): PatientAge, LOS"
+    ),
+    "7eca4c3cb1eeb0ad8e174989dd795d4f7b4127a828a549a8f45cc87162ec320e": (
+        "data conversion error: E2 failed to decode record 205: data conversion error: "
+        "E2 record has multiple exact Int32 framings with different values in field(s): ID, x, y"
+    ),
+    "9291a2eb0e072dbfb8b49757b5f06374d6ef8af1470921b1ad05c254ddb16262": (
+        "data conversion error: E2 failed to decode record 32: data conversion error: "
+        "E2 record has multiple exact Int32 framings with different values in field(s): discounted_price, actual_price"
+    ),
+    "9ad5fe00a6e9e0184a6b1c35a85b5d937151ffd82a3d880fd099e910059d3bf4": (
+        "data conversion error: E2 failed to decode record 0: data conversion error: "
+        "E2 record has multiple exact Int32 framings with different values in field(s): Quantity, Profit"
+    ),
+    "b06b54bf232f0e7889bd6bad96a45dde952aa0b95aeb721f63d6a19fd4db19e5": (
+        "data conversion error: E2 failed to decode record 4: data conversion error: "
+        "E2 record has 1 trailing byte(s) after its declared fields"
+    ),
+    "b1d89869879c269654c0407ebbda06b01f3453de8d5a7e4407a30982e8fb8f12": (
+        "data conversion error: E2 failed to decode record 37: data conversion error: "
+        "E2 record has multiple exact Int32 framings with different values in field(s): x, y"
+    ),
+    "b39d8516fb12922e509a2b7ecef27b3cc59ea2d672aee703d73e768f5cf340ec": (
+        "data conversion error: E2 failed to decode record 0: data conversion error: "
+        "E2 record has 1 trailing byte(s) after its declared fields"
+    ),
+    "baeec5eff8c7702b0d944151f06d75b27391196fb1c84afce73f41cb5d81117d": (
+        "data conversion error: E2 failed to decode record 10: data conversion error: "
+        "E2 record has multiple exact Int32 framings with different values in field(s): RecordID, RowID"
+    ),
+    "dec8f038dcce4a07ea425f8711c967134c4ccc31300cd51bc38d824f7730cae2": (
+        "data conversion error: E2 failed to decode record 10: data conversion error: "
+        "E2 record has 1 trailing byte(s) after its declared fields"
+    ),
+    "e68fc1f7a8771eab5a6c1637e827c7f1406c91180a24e5658b1fdd8dd7b1942e": (
+        "data conversion error: E2 failed to decode record 0: data conversion error: "
+        "E2 record does not match its declared schema using any exact Int32 framing"
+    ),
+    "fbc5b83fd88256eba152f79afe1811795b6e585831fc65225697dbcd681c8530": (
+        "data conversion error: E2 failed to decode record 0: data conversion error: "
+        "E2 record has 1 trailing byte(s) after its declared fields"
+    ),
+}
 
 if not E1_FILES and not E2_FILES:
     pytest.skip("YXDB corpus not available", allow_module_level=True)
@@ -67,6 +140,14 @@ def _sample(files: list[Path], n: int) -> list[Path]:
     return files[:: len(files) // n][:n]
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 # --------------------------------------------------------------------------- #
 # Batched reads agree with eager reads
 # --------------------------------------------------------------------------- #
@@ -94,10 +175,17 @@ def test_e1_batched_matches_eager(path: Path) -> None:
 @pytest.mark.parametrize("path", E2_FILES, ids=lambda p: p.name)
 def test_e2_batched_matches_eager(path: Path) -> None:
     """E2 files must be readable through the batch reader, matching the eager read."""
+    expected_error = KNOWN_E2_STRICT_ERRORS.get(_sha256(path))
+    if expected_error is not None:
+        with pytest.raises(TypeError) as exc_info:
+            yx.read_yxdb(str(path), spatial="raw")
+        assert str(exc_info.value) == expected_error
+        return
+
     try:
         eager = yx.read_yxdb(str(path), spatial="raw")
     except Exception as exc:  # noqa: BLE001 - corpus holds intentionally odd files
-        pytest.skip(f"file not readable eagerly: {exc}")
+        pytest.fail(f"unreviewed E2 decode failure for sha256={_sha256(path)}: {exc}")
 
     streamed = _concat_batches(path, batch_size=1024)
     if eager.height == 0:
