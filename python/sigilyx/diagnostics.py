@@ -44,7 +44,15 @@ def _format(path: Path) -> str:
 
 def _redact_path(message: str, path: Path) -> str:
     """Remove the supplied path from an error string before it is reported."""
-    candidates = {str(path), str(path.absolute()), str(path.resolve())}
+    candidates = {
+        path.name,
+        str(path),
+        str(path).replace("/", "\\"),
+        str(path.absolute()),
+        str(path.absolute()).replace("/", "\\"),
+        str(path.resolve()),
+        str(path.resolve()).replace("/", "\\"),
+    }
     for candidate in sorted(candidates, key=len, reverse=True):
         if candidate:
             message = message.replace(candidate, "<input path>")
