@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-21
+
+### Added
+
+- `diagnose_yxdb()` and `python -m sigilyx.diagnostics` produce a structured
+  troubleshooting report without including the input path, file name, row
+  values, raw file bytes, schema names, or full parser errors by default.
+  Schema names and full errors require explicit opt-in flags and should be
+  reviewed before sharing.
+
 ## [0.4.1] - 2026-09-19
 
 ### Fixed

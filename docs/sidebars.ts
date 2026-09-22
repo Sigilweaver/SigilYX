@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
         'python/lazy-scan',
         'python/writing',
         'python/metadata',
+        'python/diagnostics',
         'python/spatial',
         'python/row-reader',
         'python/api-reference',

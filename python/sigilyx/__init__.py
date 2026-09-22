@@ -95,6 +95,21 @@ scan = scan_yxdb
 write = write_yxdb
 sink = sink_yxdb
 
+
+def diagnose_yxdb(path, *, include_schema=False, include_error_details=False):
+    """Return a privacy-aware diagnostic report for a YXDB file.
+
+    Schema names and full error messages are excluded unless explicitly
+    requested because they can contain sensitive business information.
+    """
+    from sigilyx.diagnostics import diagnose_yxdb as _diagnose_yxdb
+
+    return _diagnose_yxdb(
+        path,
+        include_schema=include_schema,
+        include_error_details=include_error_details,
+    )
+
 __all__ = [
     "__version__",
     "read",
@@ -111,6 +126,7 @@ __all__ = [
     "read_yxdb_fields",
     "read_spatial_info",
     "record_count",
+    "diagnose_yxdb",
     "FieldInfo",
     "YxdbRowReader",
     "write",

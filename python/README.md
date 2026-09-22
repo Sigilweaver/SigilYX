@@ -140,6 +140,20 @@ for f in fields:
 n = yx.record_count("data.yxdb")
 ```
 
+### Diagnostics
+
+Create a privacy-aware report when a file does not read:
+
+```bash
+python -m sigilyx.diagnostics data.yxdb
+```
+
+The default report includes environment, file size and SHA-256, detected
+format, schema type counts, record count, and decode outcome. It excludes the
+input path, file name, row values, raw bytes, schema names, and full parser
+errors. Use `--include-schema` or `--include-error-details` only after
+reviewing the output for sensitive information.
+
 ## Field Types
 
 | YXDB Type | Polars / Arrow Type | Notes |

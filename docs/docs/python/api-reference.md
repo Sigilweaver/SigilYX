@@ -22,6 +22,7 @@ All of the functions below are also reachable as `yx.<name>` after `import sigil
 | `read_schema(path)` | `list[dict]` | Field metadata as raw dicts (`name`, `type`, `size`, `scale`). |
 | `read_yxdb_fields(path)` | `list[FieldInfo]` | Field metadata as [`FieldInfo`](#fieldinfo) objects. See [Metadata](/python/metadata). |
 | `record_count(path)` | `int` | Number of records, from the header only. |
+| `diagnose_yxdb(path, *, include_schema=False, include_error_details=False)` | `dict` | Privacy-aware report for troubleshooting a read failure. See [Diagnostics](/python/diagnostics). |
 
 Common parameters:
 
