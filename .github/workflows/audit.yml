@@ -29,11 +29,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: taiki-e/install-action@cargo-audit
-      # Advisories tracked in Sigilweaver/SigilYX#26; remove these --ignore flags once
-      # that upgrade lands.
+      # quick-xml 0.39.4 is pulled in transitively via polars-io's optional
+      # `cloud` feature (not enabled in this workspace) through object_store,
+      # which still caps quick-xml at 0.39. Tracked in Sigilweaver/SigilYX#26;
+      # remove these --ignore flags once polars-io bumps its object_store
+      # constraint past 0.14.
       - run: >
           cargo audit
-          --ignore RUSTSEC-2026-0176
-          --ignore RUSTSEC-2026-0177
           --ignore RUSTSEC-2026-0194
           --ignore RUSTSEC-2026-0195

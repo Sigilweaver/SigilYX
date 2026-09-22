@@ -2634,7 +2634,7 @@ mod tests {
         )
         .unwrap();
         let id_col = df.column("Id").unwrap().i32().unwrap();
-        let id_sum: i64 = id_col.into_iter().map(|v| v.unwrap_or(0) as i64).sum();
+        let id_sum: i64 = id_col.iter().map(|v| v.unwrap_or(0) as i64).sum();
         // sum(1..=50000) = 50000 * 50001 / 2 = 1_250_025_000
         assert_eq!(id_sum, 1_250_025_000);
     }

@@ -1510,21 +1510,11 @@ mod tests {
         assert_eq!(df2.width(), 2);
 
         let id_col = df2.column("id").unwrap();
-        let id_vals: Vec<i32> = id_col
-            .i32()
-            .unwrap()
-            .into_iter()
-            .map(|x| x.unwrap())
-            .collect();
+        let id_vals: Vec<i32> = id_col.i32().unwrap().iter().map(|x| x.unwrap()).collect();
         assert_eq!(id_vals, vec![1, 2, 3]);
 
         let name_col = df2.column("name").unwrap();
-        let name_vals: Vec<&str> = name_col
-            .str()
-            .unwrap()
-            .into_iter()
-            .map(|x| x.unwrap())
-            .collect();
+        let name_vals: Vec<&str> = name_col.str().unwrap().iter().map(|x| x.unwrap()).collect();
         assert_eq!(name_vals, vec!["Alice", "Bob", "Charlie"]);
     }
 
@@ -1548,7 +1538,7 @@ mod tests {
         assert_eq!(df2.height(), 3);
 
         let val_col = df2.column("val").unwrap();
-        let vals: Vec<Option<i32>> = val_col.i32().unwrap().into_iter().collect();
+        let vals: Vec<Option<i32>> = val_col.i32().unwrap().iter().collect();
         assert_eq!(vals, vec![Some(10), None, Some(30)]);
     }
 
@@ -1582,7 +1572,7 @@ mod tests {
             .unwrap()
             .bool()
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|x| x.unwrap())
             .collect();
         assert_eq!(bools, vec![true, false, true]);
@@ -1593,7 +1583,7 @@ mod tests {
             .unwrap()
             .i32()
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|x| x.unwrap())
             .collect();
         assert_eq!(i32s, vec![100, 200, 300]);
@@ -1604,7 +1594,7 @@ mod tests {
             .unwrap()
             .str()
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|x| x.unwrap())
             .collect();
         assert_eq!(strs, vec!["a", "bb", "ccc"]);
@@ -1649,7 +1639,7 @@ mod tests {
             .unwrap()
             .i32()
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|x| x.unwrap())
             .collect();
         assert_eq!(ids, vec![1, 2, 3, 4, 5]);
@@ -1659,7 +1649,7 @@ mod tests {
             .unwrap()
             .str()
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|x| x.unwrap())
             .collect();
         assert_eq!(names, vec!["Alice", "Bob", "Charlie", "David", "Eve"]);
@@ -1695,7 +1685,7 @@ mod tests {
             .unwrap()
             .i64()
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|x| x.unwrap())
             .collect();
         assert_eq!(values, (0..1000).collect::<Vec<_>>());
@@ -1822,7 +1812,7 @@ mod tests {
             .unwrap()
             .str()
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|x| x.unwrap())
             .collect();
         assert_eq!(vals, vec!["", "", ""]);
@@ -2100,7 +2090,7 @@ mod tests {
             .unwrap()
             .i32()
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|x| x.unwrap())
             .collect();
         assert_eq!(ids, vec![1, 2, 3]);
@@ -2109,7 +2099,7 @@ mod tests {
             .unwrap()
             .str()
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|x| x.unwrap())
             .collect();
         assert_eq!(texts, vec!["a", "b", "c"]);
@@ -2369,7 +2359,7 @@ mod tests {
         assert_eq!(col.get(0), Some(0));
         assert_eq!(col.get(n as usize - 1), Some(n - 1));
         // Verify sum to catch any corruption
-        let sum: i64 = col.into_iter().map(|v| v.unwrap()).sum();
+        let sum: i64 = col.iter().map(|v| v.unwrap()).sum();
         assert_eq!(sum, n * (n - 1) / 2);
     }
 
@@ -2540,7 +2530,7 @@ mod tests {
             .unwrap()
             .i32()
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|x| x.unwrap())
             .collect();
         assert_eq!(vals, vec![1, 2, 3]);

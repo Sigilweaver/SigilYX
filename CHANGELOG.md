@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped `pyo3` to 0.29 and `pyo3-polars` to 0.28, clearing RUSTSEC-2026-0176
+  and RUSTSEC-2026-0177. This required bumping `polars`/`polars-arrow` to
+  0.55, which changed `ChunkedArray` iteration (`&ChunkedArray::into_iter()`
+  and `into_no_null_iter()` were removed in favor of `.iter()`/
+  `.no_null_iter()`); internal call sites in `spatial.rs`, `e1/reader.rs`,
+  `e1/writer.rs`, and `e2/reader.rs` were updated accordingly. No public API
+  changes. RUSTSEC-2026-0194/-0195 (quick-xml, pulled in transitively via
+  `polars-io`'s optional `object_store` dependency) remain blocked upstream;
+  see #26.
+
 ## [0.4.2] - 2026-09-21
 
 ### Added
