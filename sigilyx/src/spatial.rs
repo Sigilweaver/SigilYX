@@ -1138,7 +1138,7 @@ pub fn convert_spatial_columns_to_wkb(df: DataFrame, fields: &[FieldMeta]) -> Re
                 YxdbError::ConversionError(format!("expected Binary column for SpatialObj: {e}"))
             })?;
             let converted: BinaryChunked = binary
-                .into_iter()
+                .iter()
                 .map(|opt_bytes| match opt_bytes {
                     None => Ok(None),
                     Some([]) => Ok(None),
@@ -1179,7 +1179,7 @@ pub fn convert_spatial_columns_to_shp(df: &DataFrame, fields: &[FieldMeta]) -> R
                 YxdbError::ConversionError(format!("expected Binary column for SpatialObj: {e}"))
             })?;
             let converted: Vec<Option<Vec<u8>>> = binary
-                .into_iter()
+                .iter()
                 .map(|opt_bytes| match opt_bytes {
                     None => Ok(None),
                     Some([]) => Ok(None),

@@ -1366,7 +1366,7 @@ mod tests {
             .unwrap()
             .str()
             .unwrap()
-            .into_no_null_iter()
+            .no_null_iter()
             .collect();
         assert_eq!(strings, vec!["one", "two"]);
     }
