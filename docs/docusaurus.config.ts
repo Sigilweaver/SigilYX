@@ -17,7 +17,7 @@ const config: Config = {
       onBrokenMarkdownLinks: 'throw',
     },
   },
-  plugins: ['docusaurus-plugin-llms-txt'],
+
   themes: ['@docusaurus/theme-mermaid'],
 
   // Set the production url of your site here
