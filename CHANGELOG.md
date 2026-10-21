@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changes. RUSTSEC-2026-0194/-0195 (quick-xml, pulled in transitively via
   `polars-io`'s optional `object_store` dependency) remain blocked upstream;
   see #26.
+- Updated `rustls` to 0.23.46 and `rustls-webpki` to 0.103.16 in the
+  lockfile, clearing the rustls advisories and RUSTSEC-2026-0382. No code or
+  API changes.
 
 ## [0.4.2] - 2026-09-21
 
