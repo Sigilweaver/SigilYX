@@ -79,14 +79,14 @@ pub fn parse_meta_xml(xml: &str) -> Result<Vec<FieldMeta>> {
 
     loop {
         match reader.read_event() {
-            Ok(Event::Start(ref e)) if e.name().as_ref() == b"RecordInfo" => {
+            Ok(Event::Start(ref e)) if e.name().as_ref() == "RecordInfo" => {
                 in_record_info = true;
             }
-            Ok(Event::End(ref e)) if e.name().as_ref() == b"RecordInfo" => {
+            Ok(Event::End(ref e)) if e.name().as_ref() == "RecordInfo" => {
                 in_record_info = false;
             }
             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e))
-                if e.name().as_ref() == b"Field" && in_record_info =>
+                if e.name().as_ref() == "Field" && in_record_info =>
             {
                 let mut name = String::new();
                 let mut type_str = String::new();
@@ -95,22 +95,20 @@ pub fn parse_meta_xml(xml: &str) -> Result<Vec<FieldMeta>> {
 
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
-                        b"name" => {
+                        "name" => {
                             name = attr
                                 .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                                 .map(|v| v.into_owned())
-                                .unwrap_or_else(|_| {
-                                    String::from_utf8_lossy(&attr.value).to_string()
-                                });
+                                .unwrap_or_else(|_| attr.value.to_string());
                         }
-                        b"type" => {
-                            type_str = String::from_utf8_lossy(&attr.value).to_string();
+                        "type" => {
+                            type_str = attr.value.to_string();
                         }
-                        b"size" => {
-                            size = String::from_utf8_lossy(&attr.value).parse().unwrap_or(0);
+                        "size" => {
+                            size = attr.value.parse().unwrap_or(0);
                         }
-                        b"scale" => {
-                            scale = String::from_utf8_lossy(&attr.value).parse().unwrap_or(0);
+                        "scale" => {
+                            scale = attr.value.parse().unwrap_or(0);
                         }
                         _ => {}
                     }

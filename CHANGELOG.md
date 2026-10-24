@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated `rustls` to 0.23.46 and `rustls-webpki` to 0.103.16 in the
   lockfile, clearing the rustls advisories and RUSTSEC-2026-0382. No code or
   API changes.
+- Updated `quick-xml` to 0.42, which moved to a `&str`-based API; the E1 and
+  E2 metadata XML parsers were adjusted accordingly. No public API changes.
 
 ## [0.4.2] - 2026-09-21
 
