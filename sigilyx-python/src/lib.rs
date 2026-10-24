@@ -23,9 +23,10 @@ fn to_py_err(e: sigilyx_core::YxdbError) -> PyErr {
             }
             _ => pyo3::exceptions::PyOSError::new_err(e.to_string()),
         },
-        YxdbError::InvalidFile(_) | YxdbError::XmlError(_) | YxdbError::LzfError(_) => {
-            pyo3::exceptions::PyValueError::new_err(e.to_string())
-        }
+        YxdbError::InvalidFile(_)
+        | YxdbError::XmlError(_)
+        | YxdbError::InvalidAttribute { .. }
+        | YxdbError::LzfError(_) => pyo3::exceptions::PyValueError::new_err(e.to_string()),
         YxdbError::UnsupportedFieldType(_) | YxdbError::ConversionError(_) => {
             pyo3::exceptions::PyTypeError::new_err(e.to_string())
         }

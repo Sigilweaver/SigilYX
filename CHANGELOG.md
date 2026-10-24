@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- E1 and E2 metadata parsing no longer silently swallows malformed values.
+  A `<Field>` with a non-numeric, negative, or empty `size` or `scale`, an
+  invalid XML escape or malformed attribute list, or a missing `name` or
+  `type` now fails with the new `YxdbError::InvalidAttribute` (field,
+  attribute, raw value, reason) instead of loading with zeroed or empty
+  fields. An absent `size` or `scale` still defaults to 0. E1 metadata with
+  invalid UTF-16 (odd length, unpaired surrogate) now returns `XmlError`
+  instead of substituting U+FFFD, and `e1::header::decode_utf16_le` now
+  returns `Result<String>`. Malformed headers that previously loaded will now
+  raise `ValueError` in Python.
+
 ### Changed
 
 - Bumped `pyo3` to 0.29 and `pyo3-polars` to 0.28, clearing RUSTSEC-2026-0176

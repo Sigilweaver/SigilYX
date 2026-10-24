@@ -120,6 +120,90 @@ impl YxdbHeader {
     }
 }
 
+/// Parsed `<Field>` attributes shared by the E1 and E2 metadata parsers.
+pub(crate) struct FieldAttrs {
+    pub name: String,
+    pub type_str: String,
+    pub size: usize,
+    pub scale: usize,
+}
+
+fn attr_err(field: &str, attribute: &str, value: &str, reason: impl ToString) -> YxdbError {
+    YxdbError::InvalidAttribute {
+        field: field.to_string(),
+        attribute: attribute.to_string(),
+        value: value.to_string(),
+        reason: reason.to_string(),
+    }
+}
+
+/// Parse the attributes of a `<Field>` element.
+///
+/// `index` is the zero-based field position, used to label errors when the
+/// `name` attribute is missing or unreadable.
+///
+/// - `name` and `type` are required; absence is an error.
+/// - `size` and `scale` may be absent and then default to 0: fixed-width types
+///   such as `Int32` carry neither, and `scale` only applies to `FixedDecimal`
+///   (see SPECIFICATION-E1.md, field attribute table). When present they must
+///   parse as an unsigned integer; anything else is an error.
+/// - A malformed attribute list or an invalid XML escape is an error.
+pub(crate) fn parse_field_attrs(
+    e: &quick_xml::events::BytesStart<'_>,
+    index: usize,
+) -> Result<FieldAttrs> {
+    let label = format!("#{index}");
+    let mut name: Option<String> = None;
+    let mut type_str: Option<String> = None;
+    let mut size_raw: Option<String> = None;
+    let mut scale_raw: Option<String> = None;
+
+    for attr in e.attributes() {
+        let attr = attr.map_err(|err| attr_err(&label, "<attributes>", e.as_ref(), err))?;
+        let key = attr.key.as_ref();
+        match key {
+            "name" => {
+                let v = attr
+                    .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                    .map_err(|err| attr_err(&label, "name", &attr.value, err))?;
+                name = Some(v.into_owned());
+            }
+            "type" => {
+                let v = attr
+                    .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                    .map_err(|err| attr_err(&label, "type", &attr.value, err))?;
+                type_str = Some(v.into_owned());
+            }
+            "size" => size_raw = Some(attr.value.to_string()),
+            "scale" => scale_raw = Some(attr.value.to_string()),
+            _ => {}
+        }
+    }
+
+    let name = name.ok_or_else(|| attr_err(&label, "name", "", "required attribute is absent"))?;
+    let type_str =
+        type_str.ok_or_else(|| attr_err(&name, "type", "", "required attribute is absent"))?;
+    let size = parse_count(&name, "size", size_raw.as_deref())?;
+    let scale = parse_count(&name, "scale", scale_raw.as_deref())?;
+
+    Ok(FieldAttrs {
+        name,
+        type_str,
+        size,
+        scale,
+    })
+}
+
+/// Absent -> 0 (see [`parse_field_attrs`]); present but unparseable -> error.
+fn parse_count(field: &str, attribute: &str, raw: Option<&str>) -> Result<usize> {
+    match raw {
+        None => Ok(0),
+        Some(v) => v
+            .parse::<usize>()
+            .map_err(|err| attr_err(field, attribute, v, err)),
+    }
+}
+
 /// Parse the UTF-16-encoded XML metadata into a list of [`FieldMeta`].
 pub fn parse_meta_xml(xml: &str) -> Result<Vec<FieldMeta>> {
     use quick_xml::events::Event;
@@ -141,31 +225,12 @@ pub fn parse_meta_xml(xml: &str) -> Result<Vec<FieldMeta>> {
             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e))
                 if e.name().as_ref() == "Field" && in_record_info =>
             {
-                let mut name = String::new();
-                let mut type_str = String::new();
-                let mut size: usize = 0;
-                let mut scale: usize = 0;
-
-                for attr in e.attributes().flatten() {
-                    match attr.key.as_ref() {
-                        "name" => {
-                            name = attr
-                                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                                .map(|v| v.into_owned())
-                                .unwrap_or_else(|_| attr.value.to_string());
-                        }
-                        "type" => {
-                            type_str = attr.value.to_string();
-                        }
-                        "size" => {
-                            size = attr.value.parse().unwrap_or(0);
-                        }
-                        "scale" => {
-                            scale = attr.value.parse().unwrap_or(0);
-                        }
-                        _ => {}
-                    }
-                }
+                let FieldAttrs {
+                    name,
+                    type_str,
+                    size,
+                    scale,
+                } = parse_field_attrs(e, fields.len())?;
 
                 let field_type = FieldType::from_xml_str(&type_str)
                     .ok_or_else(|| YxdbError::UnsupportedFieldType(type_str.clone()))?;
@@ -209,12 +274,22 @@ pub fn parse_meta_xml(xml: &str) -> Result<Vec<FieldMeta>> {
 /// Decode a byte slice of little-endian UTF-16 into a Rust String.
 ///
 /// The input should NOT include a trailing null terminator pair.
-pub fn decode_utf16_le(bytes: &[u8]) -> String {
+///
+/// Returns an error on an odd byte length or unpaired surrogates rather than
+/// substituting U+FFFD.
+pub fn decode_utf16_le(bytes: &[u8]) -> Result<String> {
+    if bytes.len() % 2 != 0 {
+        return Err(YxdbError::XmlError(format!(
+            "UTF-16 metadata has odd byte length {}",
+            bytes.len()
+        )));
+    }
     let code_units: Vec<u16> = bytes
         .chunks_exact(2)
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
-    String::from_utf16_lossy(&code_units)
+    String::from_utf16(&code_units)
+        .map_err(|e| YxdbError::XmlError(format!("invalid UTF-16 in metadata: {e}")))
 }
 
 #[cfg(test)]
@@ -389,26 +464,26 @@ mod tests {
     #[test]
     fn decode_utf16le_ascii() {
         let bytes = [0x48, 0x00, 0x69, 0x00]; // "Hi"
-        assert_eq!(decode_utf16_le(&bytes), "Hi");
+        assert_eq!(decode_utf16_le(&bytes).unwrap(), "Hi");
     }
 
     #[test]
     fn decode_utf16le_non_ascii() {
         // ü = U+00FC = [0xFC, 0x00]
         let bytes = [0xFC, 0x00];
-        assert_eq!(decode_utf16_le(&bytes), "ü");
+        assert_eq!(decode_utf16_le(&bytes).unwrap(), "ü");
     }
 
     #[test]
     fn decode_utf16le_empty() {
-        assert_eq!(decode_utf16_le(&[]), "");
+        assert_eq!(decode_utf16_le(&[]).unwrap(), "");
     }
 
     #[test]
     fn decode_utf16le_cjk() {
         // U+65E5 (日) = [0xE5, 0x65]
         let bytes = [0xE5, 0x65];
-        assert_eq!(decode_utf16_le(&bytes), "日");
+        assert_eq!(decode_utf16_le(&bytes).unwrap(), "日");
     }
 
     #[test]
@@ -451,5 +526,88 @@ mod tests {
 
         let hdr = YxdbHeader::parse(&buf).unwrap();
         assert!(!hdr.has_spatial_index());
+    }
+
+    fn attr_error(err: YxdbError) -> (String, String, String) {
+        match err {
+            YxdbError::InvalidAttribute {
+                field,
+                attribute,
+                value,
+                ..
+            } => (field, attribute, value),
+            other => panic!("expected InvalidAttribute, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn malformed_size_is_error() {
+        let xml = r#"<RecordInfo><Field name="Name" type="V_WString" size="abc" /></RecordInfo>"#;
+        let (f, a, v) = attr_error(parse_meta_xml(xml).unwrap_err());
+        assert_eq!(
+            (f.as_str(), a.as_str(), v.as_str()),
+            ("Name", "size", "abc")
+        );
+    }
+
+    #[test]
+    fn negative_size_is_error() {
+        let xml = r#"<RecordInfo><Field name="Name" type="String" size="-5" /></RecordInfo>"#;
+        let (_, a, v) = attr_error(parse_meta_xml(xml).unwrap_err());
+        assert_eq!((a.as_str(), v.as_str()), ("size", "-5"));
+    }
+
+    #[test]
+    fn malformed_scale_is_error() {
+        let xml = r#"<RecordInfo><Field name="Amt" type="FixedDecimal" size="19" scale="x6" /></RecordInfo>"#;
+        let (f, a, v) = attr_error(parse_meta_xml(xml).unwrap_err());
+        assert_eq!((f.as_str(), a.as_str(), v.as_str()), ("Amt", "scale", "x6"));
+    }
+
+    #[test]
+    fn empty_size_is_error_not_absent() {
+        let xml = r#"<RecordInfo><Field name="Name" type="String" size="" /></RecordInfo>"#;
+        let (_, a, v) = attr_error(parse_meta_xml(xml).unwrap_err());
+        assert_eq!((a.as_str(), v.as_str()), ("size", ""));
+    }
+
+    #[test]
+    fn bad_escape_in_name_is_error() {
+        let xml = r#"<RecordInfo><Field name="A&bogus;B" type="Int32" /></RecordInfo>"#;
+        let (f, a, v) = attr_error(parse_meta_xml(xml).unwrap_err());
+        assert_eq!(
+            (f.as_str(), a.as_str(), v.as_str()),
+            ("#0", "name", "A&bogus;B")
+        );
+    }
+
+    #[test]
+    fn malformed_attribute_list_is_error() {
+        let xml = r#"<RecordInfo><Field name="A" type="Int32" size=4 /></RecordInfo>"#;
+        let (f, a, _) = attr_error(parse_meta_xml(xml).unwrap_err());
+        assert_eq!((f.as_str(), a.as_str()), ("#0", "<attributes>"));
+    }
+
+    #[test]
+    fn absent_size_and_scale_default_to_zero() {
+        let xml = r#"<RecordInfo><Field name="ID" type="Int32" /></RecordInfo>"#;
+        let fields = parse_meta_xml(xml).unwrap();
+        assert_eq!((fields[0].size, fields[0].scale), (0, 0));
+    }
+
+    #[test]
+    fn absent_name_or_type_is_error() {
+        let xml = r#"<RecordInfo><Field type="Int32" /></RecordInfo>"#;
+        let (_, a, _) = attr_error(parse_meta_xml(xml).unwrap_err());
+        assert_eq!(a, "name");
+        let xml = r#"<RecordInfo><Field name="X" /></RecordInfo>"#;
+        let (f, a, _) = attr_error(parse_meta_xml(xml).unwrap_err());
+        assert_eq!((f.as_str(), a.as_str()), ("X", "type"));
+    }
+
+    #[test]
+    fn decode_utf16_rejects_odd_length_and_lone_surrogate() {
+        assert!(decode_utf16_le(&[0x41]).is_err());
+        assert!(decode_utf16_le(&[0x00, 0xD8]).is_err());
     }
 }

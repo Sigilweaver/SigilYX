@@ -7,6 +7,7 @@
 //! - Bytes 72..96: All zeros (reserved)
 //! - Bytes 96..100: Metadata size in bytes (u32 LE) - byte length of UTF-8 XML
 
+use crate::e1::header::{parse_field_attrs, FieldAttrs};
 use crate::error::{Result, YxdbError};
 use crate::field::{FieldMeta, FieldType};
 
@@ -88,31 +89,12 @@ pub fn parse_meta_xml(xml: &str) -> Result<Vec<FieldMeta>> {
             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e))
                 if e.name().as_ref() == "Field" && in_record_info =>
             {
-                let mut name = String::new();
-                let mut type_str = String::new();
-                let mut size: usize = 0;
-                let mut scale: usize = 0;
-
-                for attr in e.attributes().flatten() {
-                    match attr.key.as_ref() {
-                        "name" => {
-                            name = attr
-                                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                                .map(|v| v.into_owned())
-                                .unwrap_or_else(|_| attr.value.to_string());
-                        }
-                        "type" => {
-                            type_str = attr.value.to_string();
-                        }
-                        "size" => {
-                            size = attr.value.parse().unwrap_or(0);
-                        }
-                        "scale" => {
-                            scale = attr.value.parse().unwrap_or(0);
-                        }
-                        _ => {}
-                    }
-                }
+                let FieldAttrs {
+                    name,
+                    type_str,
+                    size,
+                    scale,
+                } = parse_field_attrs(e, index)?;
 
                 let field_type = FieldType::from_xml_str(&type_str)
                     .ok_or_else(|| YxdbError::UnsupportedFieldType(type_str.clone()))?;
@@ -220,5 +202,47 @@ mod tests {
         assert_eq!(fields[1].field_type, FieldType::VWString);
         assert_eq!(fields[2].name, "Score");
         assert_eq!(fields[2].field_type, FieldType::Double);
+    }
+
+    fn attr_error(err: YxdbError) -> (String, String, String) {
+        match err {
+            YxdbError::InvalidAttribute {
+                field,
+                attribute,
+                value,
+                ..
+            } => (field, attribute, value),
+            other => panic!("expected InvalidAttribute, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn e2_malformed_size_is_error() {
+        let xml = r#"<RecordInfo><Field name="N" type="V_String" size="1e3" /></RecordInfo>"#;
+        let (f, a, v) = attr_error(parse_meta_xml(xml).unwrap_err());
+        assert_eq!((f.as_str(), a.as_str(), v.as_str()), ("N", "size", "1e3"));
+    }
+
+    #[test]
+    fn e2_malformed_scale_is_error() {
+        let xml = r#"<RecordInfo><Field name="D" type="FixedDecimal" size="19" scale="-1" /></RecordInfo>"#;
+        let (f, a, v) = attr_error(parse_meta_xml(xml).unwrap_err());
+        assert_eq!((f.as_str(), a.as_str(), v.as_str()), ("D", "scale", "-1"));
+    }
+
+    #[test]
+    fn e2_bad_escape_is_error() {
+        let xml = r#"<RecordInfo><Field name="ok" type="Int32" /><Field name="A&bogus;" type="Int32" /></RecordInfo>"#;
+        let (f, a, _) = attr_error(parse_meta_xml(xml).unwrap_err());
+        assert_eq!((f.as_str(), a.as_str()), ("#1", "name"));
+    }
+
+    #[test]
+    fn e2_absent_size_scale_default_malformed_errors() {
+        let xml = r#"<RecordInfo><Field name="ID" type="Int32" /></RecordInfo>"#;
+        let fields = parse_meta_xml(xml).unwrap();
+        assert_eq!((fields[0].size, fields[0].scale), (0, 0));
+        let xml = r#"<RecordInfo><Field name="ID" type="Int32" size="" /></RecordInfo>"#;
+        assert!(parse_meta_xml(xml).is_err());
     }
 }
