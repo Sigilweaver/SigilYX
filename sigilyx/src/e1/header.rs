@@ -198,9 +198,14 @@ pub(crate) fn parse_field_attrs(
 fn parse_count(field: &str, attribute: &str, raw: Option<&str>) -> Result<usize> {
     match raw {
         None => Ok(0),
-        Some(v) => v
-            .parse::<usize>()
-            .map_err(|err| attr_err(field, attribute, v, err)),
+        Some(v) => v.parse::<usize>().map_err(|err| {
+            attr_err(
+                field,
+                attribute,
+                v,
+                format!("expected an unsigned integer ({err})"),
+            )
+        }),
     }
 }
 
@@ -277,7 +282,7 @@ pub fn parse_meta_xml(xml: &str) -> Result<Vec<FieldMeta>> {
 ///
 /// Returns an error on an odd byte length or unpaired surrogates rather than
 /// substituting U+FFFD.
-pub fn decode_utf16_le(bytes: &[u8]) -> Result<String> {
+pub fn try_decode_utf16_le(bytes: &[u8]) -> Result<String> {
     if bytes.len() % 2 != 0 {
         return Err(YxdbError::XmlError(format!(
             "UTF-16 metadata has odd byte length {}",
@@ -290,6 +295,21 @@ pub fn decode_utf16_le(bytes: &[u8]) -> Result<String> {
         .collect();
     String::from_utf16(&code_units)
         .map_err(|e| YxdbError::XmlError(format!("invalid UTF-16 in metadata: {e}")))
+}
+
+/// Decode a byte slice of little-endian UTF-16 into a Rust String, replacing
+/// invalid data with U+FFFD.
+///
+/// This is lossy: odd trailing bytes are dropped and unpaired surrogates are
+/// substituted without any error. Use [`try_decode_utf16_le`], which reports
+/// both.
+#[deprecated(note = "lossy; use try_decode_utf16_le, which returns an error on invalid UTF-16")]
+pub fn decode_utf16_le(bytes: &[u8]) -> String {
+    let code_units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    String::from_utf16_lossy(&code_units)
 }
 
 #[cfg(test)]
@@ -464,26 +484,26 @@ mod tests {
     #[test]
     fn decode_utf16le_ascii() {
         let bytes = [0x48, 0x00, 0x69, 0x00]; // "Hi"
-        assert_eq!(decode_utf16_le(&bytes).unwrap(), "Hi");
+        assert_eq!(try_decode_utf16_le(&bytes).unwrap(), "Hi");
     }
 
     #[test]
     fn decode_utf16le_non_ascii() {
         // ü = U+00FC = [0xFC, 0x00]
         let bytes = [0xFC, 0x00];
-        assert_eq!(decode_utf16_le(&bytes).unwrap(), "ü");
+        assert_eq!(try_decode_utf16_le(&bytes).unwrap(), "ü");
     }
 
     #[test]
     fn decode_utf16le_empty() {
-        assert_eq!(decode_utf16_le(&[]).unwrap(), "");
+        assert_eq!(try_decode_utf16_le(&[]).unwrap(), "");
     }
 
     #[test]
     fn decode_utf16le_cjk() {
         // U+65E5 (日) = [0xE5, 0x65]
         let bytes = [0xE5, 0x65];
-        assert_eq!(decode_utf16_le(&bytes).unwrap(), "日");
+        assert_eq!(try_decode_utf16_le(&bytes).unwrap(), "日");
     }
 
     #[test]
@@ -607,7 +627,14 @@ mod tests {
 
     #[test]
     fn decode_utf16_rejects_odd_length_and_lone_surrogate() {
-        assert!(decode_utf16_le(&[0x41]).is_err());
-        assert!(decode_utf16_le(&[0x00, 0xD8]).is_err());
+        assert!(try_decode_utf16_le(&[0x41]).is_err());
+        assert!(try_decode_utf16_le(&[0x00, 0xD8]).is_err());
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_decode_utf16_le_stays_lossy() {
+        assert_eq!(decode_utf16_le(&[0x48, 0x00, 0x69, 0x00]), "Hi");
+        assert_eq!(decode_utf16_le(&[0x00, 0xD8]), "\u{FFFD}");
     }
 }
