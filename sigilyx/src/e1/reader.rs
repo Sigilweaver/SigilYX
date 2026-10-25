@@ -85,7 +85,7 @@ impl YxdbReader {
         } else {
             &meta_bytes
         };
-        let meta_xml = header::decode_utf16_le(xml_bytes);
+        let meta_xml = header::try_decode_utf16_le(xml_bytes)?;
 
         // Parse fields
         let fields = header::parse_meta_xml(&meta_xml)?;
