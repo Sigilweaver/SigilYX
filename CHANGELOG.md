@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Updated the transitive `zstd` 0.13.4, `zstd-safe` 7.4.0 and `zstd-sys`
+  2.1.2 (via `polars-arrow`) in the lockfile, fixing
+  RUSTSEC-2026-0391, RUSTSEC-2026-0398, RUSTSEC-2026-0403 and
+  RUSTSEC-2026-0410, plus the `zstd-safe` unsoundness warnings
+  RUSTSEC-2026-0395 through -0397, -0399 through -0402 and -0404 through
+  -0406. Also updated `tokio` to 1.53.3 (RUSTSEC-2026-0386
+  unsoundness warning) and replaced the yanked `yoke-derive` 0.8.3 with
+  0.8.4. No code or API changes.
 - Bumped `pyo3` to 0.29 and `pyo3-polars` to 0.28, clearing RUSTSEC-2026-0176
   and RUSTSEC-2026-0177. This required bumping `polars`/`polars-arrow` to
   0.55, which changed `ChunkedArray` iteration (`&ChunkedArray::into_iter()`
