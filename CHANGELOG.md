@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lockfile updates quinn-proto 0.11.18 to 0.11.19 (RUSTSEC-2026-0523,
+  RUSTSEC-2026-0524) and quinn-udp 0.5.15 to 0.5.16 (RUSTSEC-2026-0538), so
+  `cargo audit` passes. Both are optional `cloud`-feature dependencies and are
+  not compiled in this workspace's default build.
 - E1 and E2 metadata parsing no longer silently swallows malformed values.
   A `<Field>` with a non-numeric, negative, or empty `size` or `scale`, an
   invalid XML escape or malformed attribute list, or a missing `name` or
