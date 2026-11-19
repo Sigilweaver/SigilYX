@@ -4,7 +4,7 @@ description: Install sccache and probe the GHA cache backend
 runs:
   using: composite
   steps:
-    - uses: mozilla-actions/sccache-action@v0.0.7
+    - uses: mozilla-actions/sccache-action@v0.0.9
       continue-on-error: true
 
     - name: Probe sccache backend
