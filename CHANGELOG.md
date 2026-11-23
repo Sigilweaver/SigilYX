@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lockfile updates url 2.5.8 to 2.5.9 and form_urlencoded 1.2.2 to 1.2.3 in
+  both `Cargo.lock` and `fuzz/Cargo.lock` (RUSTSEC-2026-0592, stack overflow
+  in `Url::origin()` on nested `blob:` URLs).
 - Lockfile updates quinn-proto 0.11.18 to 0.11.19 (RUSTSEC-2026-0523,
   RUSTSEC-2026-0524) and quinn-udp 0.5.15 to 0.5.16 (RUSTSEC-2026-0538), so
   `cargo audit` passes. Both are optional `cloud`-feature dependencies and are
