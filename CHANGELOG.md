@@ -67,6 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   API changes.
 - Updated `quick-xml` to 0.42, which moved to a `&str`-based API; the E1 and
   E2 metadata XML parsers were adjusted accordingly. No public API changes.
+- `CITATION.cff` identifies the Zenodo concept DOI (10.5281/zenodo.20470608),
+  which resolves to the latest archived version, instead of the DOI of the
+  0.3.0 version record.
 
 ## [0.4.2] - 2026-09-21
 
